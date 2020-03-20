@@ -1,64 +1,116 @@
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
 #include <math.h>
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
 #include <string.h>
-#include "credentials.h"
-
-// Turn on for debugging
-#define DEBUG_OUTPUT
-
-// I2C addresse
-#define ADDRESS_BME 0x76
+#include "config.h"
 
 Adafruit_BME280 bme;
-ESP8266WebServer server(80);
+bool bmeInitialized = false;
+WiFiClientSecure client;
+PubSubClient mqtt(client);
+BearSSL::PublicKey mqttServerPubKey;
+time_t lastUpdate = 0;
 
-void handleMetrics() {
-  float t = bme.readTemperature();
-  float p = bme.readPressure() / 100.0f;
-  float h = bme.readHumidity();
+void onMqttMessage(char* topic, byte* payload, unsigned int length);
 
-  char metrics[1024];
-  snprintf(metrics, 1024, "temperature %f\npressure %f\nhumidity %f\n", t, p, h);
-  server.send(200, "text/plain", metrics);
+void setupWiFi() {
+    Serial.print("Connecting to WiFi");
+    WiFi.setAutoReconnect(true);
+    WiFi.begin(config.ssid, config.password);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
+    Serial.println(WiFi.localIP());
+}
+
+void setupNtp() {
+    configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    Serial.print("Waiting for NTP time sync: ");
+    time_t now = time(nullptr);
+    while (now < 24 * 3600) {
+        delay(500);
+        Serial.print(".");
+        now = time(nullptr);
+    }
+    Serial.println(now);
+}
+
+void setupMqtt() {
+    if (!mqttServerPubKey.parse((config.mqttServerPubKey))) {
+        Serial.println("Parsing pub key failed");
+        while(true);
+    }
+    client.setKnownKey(&mqttServerPubKey);
+    mqtt.setClient(client);
+    mqtt.setServer(config.mqttServerIP, config.mqttServerPort);
+    mqtt.setCallback(onMqttMessage);
+    mqtt.subscribe("sensorbox");
+    mqtt.subscribe(config.mqttClient);
+}
+
+void setupSensors() {
+    // default i2c address 0x76
+    if (bme.begin(0x76)) {
+        bmeInitialized = true;
+    } else {
+        Serial.println("BME setup failed!");
+    }
 }
 
 void setup() {
-  unsigned status = bme.begin(ADDRESS_BME);
+    Serial.begin(9600);
+    setupWiFi();
+    setupNtp();
+    setupMqtt();
+    setupSensors();
+}
 
-#ifdef DEBUG_OUTPUT
-  Serial.begin(9600);
-  while(!Serial);    // time to get serial running
+void mqttReconnect() {
+    while (!mqtt.connected()) {
+        Serial.print("Connecting to MQTT server...");
+        if (mqtt.connect(config.mqttClient, config.mqttUser, config.mqttPassword)) {
+            Serial.println(" done");
+        } else {
+            Serial.printf("failed (state=%d), try again in 5 seconds\n", mqtt.state());
+            delay(5000);
+        }
+    }
+}
 
-  if (!status) {
-    Serial.println("Could not find a valid BME280 sensor, check wiring, address, sensor ID!");
-    Serial.print("SensorID was: 0x"); Serial.println(bme.sensorID(),16);
-    Serial.print("        ID of 0xFF probably means a bad address, a BMP 180 or BMP 085\n");
-    Serial.print("   ID of 0x56-0x58 represents a BMP 280,\n");
-    Serial.print("        ID of 0x60 represents a BME 280.\n");
-    Serial.print("        ID of 0x61 represents a BME 680.\n");
-    while (1) delay(10);
-  }
-#endif
+void sensorUpdate() {
+    time_t now = time(nullptr);
+    if (now - lastUpdate < 60) {
+        return;
+    }
 
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("");
-  Serial.println("WiFi connected: "); 
-  Serial.print(WiFi.localIP());
-  Serial.println();
+    if (bmeInitialized) {
+        float pressure = bme.readPressure() / 100.0;
+        float humidity = bme.readHumidity();
+        float temperature = bme.readTemperature();
 
-  server.on("/metrics", handleMetrics);
-  server.begin();
+        char payload[128];
+        snprintf(payload, 128, "{\"c\": \"%s\", \"T\": %d, \"p\": %f, \"h\": %f, \"t\": %f}", config.mqttClient, now, pressure, humidity,
+                 temperature);
+        mqtt.publish("sensorbox/measurements", payload);
+    }
+
+    lastUpdate = now;
 }
 
 void loop() {
-  server.handleClient();
-  Serial.print(".");
+    mqttReconnect();
+    mqtt.loop();
+    sensorUpdate();
+}
+
+void onMqttMessage(char* topic, byte* payload, unsigned int length) {
+    char *str = (char*) malloc(length+1);
+    memcpy(str, payload, length);
+    str[length] = 0;
+    Serial.printf("MQTT message (%s): %s\n", topic, str);
+    free(str);
 }
