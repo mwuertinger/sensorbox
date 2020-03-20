@@ -1,2 +1,6 @@
-credentials.h
+config.h
 .pio
+.idea
+CMakeLists.txt
+CMakeListsPrivate.txt
+cmake-build-nodemcuv2

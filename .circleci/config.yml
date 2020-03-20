@@ -6,7 +6,6 @@ jobs:
     steps:
       - run: pip install platformio
       - checkout
-      - run: cd embedded
       - run: platformio lib install 31 89 166 1089
       - run: platformio run
 
