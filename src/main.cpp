@@ -3,7 +3,6 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
-#include <math.h>
 #include <string.h>
 #include "config.h"
 
