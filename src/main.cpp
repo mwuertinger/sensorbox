@@ -8,9 +8,8 @@
 
 Adafruit_BME280 bme;
 bool bmeInitialized = false;
-WiFiClientSecure client;
-PubSubClient mqtt(client);
-BearSSL::PublicKey mqttServerPubKey;
+
+PubSubClient mqtt;
 time_t lastUpdate = 0;
 
 void onMqttMessage(char* topic, byte* payload, unsigned int length);
@@ -39,12 +38,14 @@ void setupNtp() {
 }
 
 void setupMqtt() {
-    if (!mqttServerPubKey.parse((config.mqttServerPubKey))) {
+    BearSSL::PublicKey *pubKey = new BearSSL::PublicKey();
+    if (!pubKey->parse((config.mqttServerPubKey))) {
         Serial.println("Parsing pub key failed");
         while(true);
     }
-    client.setKnownKey(&mqttServerPubKey);
-    mqtt.setClient(client);
+    WiFiClientSecure *client = new WiFiClientSecure();
+    client->setKnownKey(pubKey);
+    mqtt.setClient(*client);
     mqtt.setServer(config.mqttServerIP, config.mqttServerPort);
     mqtt.setCallback(onMqttMessage);
     mqtt.subscribe("sensorbox");
