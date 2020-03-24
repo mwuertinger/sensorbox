@@ -146,7 +146,9 @@ void sensorUpdate() {
              now, pressure, humidity,
              temperature, co2);
     Serial.printf("Publishing: %s\r\n", payload);
-    mqtt.publish("sensorbox/measurements", payload);
+    if (!mqtt.publish("sensorbox/measurements", payload)) {
+        Serial.println("Publishing failed!");
+    }
 }
 
 void loop() {
