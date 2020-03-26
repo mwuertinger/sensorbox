@@ -11,7 +11,6 @@ Adafruit_BME280 bme;
 bool bmeInitialized = false;
 
 SoftwareSerial co2Sensor(13, 15);
-time_t co2SensorStartupTime;
 
 PubSubClient mqtt;
 time_t lastUpdate = 0;
@@ -53,7 +52,9 @@ void setupMqtt() {
     mqtt.setServer(config.mqttServerIP, config.mqttServerPort);
     mqtt.setCallback(onMqttMessage);
     mqtt.subscribe("sensorbox");
-    mqtt.subscribe(config.mqttClient);
+    char mqttClient[64];
+    snprintf(mqttClient, 64, "sensorbox%02d", config.devId);
+    mqtt.subscribe(mqttClient);
 }
 
 void setupSensors() {
@@ -65,7 +66,6 @@ void setupSensors() {
     }
 
     co2Sensor.begin(9600);
-    co2SensorStartupTime = time(nullptr) + 300;
 }
 
 void setup() {
@@ -79,7 +79,9 @@ void setup() {
 void mqttReconnect() {
     while (!mqtt.connected()) {
         Serial.print("Connecting to MQTT server...");
-        if (mqtt.connect(config.mqttClient, config.mqttUser, config.mqttPassword)) {
+        char mqttClient[64];
+        snprintf(mqttClient, 64, "sensorbox%02d", config.devId);
+        if (mqtt.connect(mqttClient, config.mqttUser, config.mqttPassword)) {
             Serial.println(" done");
         } else {
             Serial.printf("failed (state=%d), try again in 5 seconds\n", mqtt.state());
@@ -90,21 +92,23 @@ void mqttReconnect() {
 
 void sensorUpdate() {
     time_t now = time(nullptr);
-    if (now - lastUpdate < 60) {
+    if (now - lastUpdate < 60) { // update every 60s
         return;
     }
     lastUpdate = now;
 
-    float pressure, humidity, temperature;
-    uint16_t co2;
+    unsigned long uptime = millis() / 1000; // system uptime in seconds
+    float pressure = 0, humidity = 0, temperature = 0;
+    uint16_t co2 = 0;
 
     if (bmeInitialized) {
         pressure = bme.readPressure() / 100.0;
         humidity = bme.readHumidity();
-        temperature = bme.readTemperature();
+        temperature = bme.readTemperature() + 273.15; // convert to Kelvin
     }
 
-    if (/*now > co2SensorStartupTime*/ true) {
+    // CO2 sensor needs 300s to warm up
+    if (uptime > 300) {
         uint8_t cmdRead[] = {0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};
         size_t res = co2Sensor.write(cmdRead, 9);
         if (res != 9) {
@@ -142,9 +146,7 @@ void sensorUpdate() {
     }
 
     char payload[128];
-    snprintf(payload, 128, "{\"C\": \"%s\", \"T\": %d, \"p\": %f, \"h\": %f, \"t\": %f, \"c\": %d}", config.mqttClient,
-             now, pressure, humidity,
-             temperature, co2);
+    snprintf(payload, 128, "%d,%ld,%ld,%f,%f,%f,%d", config.devId, now, uptime, pressure, humidity, temperature, co2);
     Serial.printf("Publishing: %s\r\n", payload);
     if (!mqtt.publish("sensorbox/measurements", payload)) {
         Serial.println("Publishing failed!");
