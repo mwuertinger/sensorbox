@@ -139,10 +139,13 @@ void sensorUpdate() {
         checksum += 1;
         if (buf[8] != checksum) {
             Serial.println("CO2 sensor: checksum error!");
-            return;
-        }
-
-        co2 = 256 * buf[2] + buf[3];
+        } else {
+	        co2 = 256 * buf[2] + buf[3];
+		if (co2 < 200 || co2 > 10000) {
+			Serial.printf("CO2 sensor: discarding inplausible value: %d\r\n", co2);
+			co2 = 0;
+		}
+	}
     }
 
     char payload[128];
