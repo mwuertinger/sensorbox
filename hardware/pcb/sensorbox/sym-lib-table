@@ -1,0 +1,3 @@
+(sym_lib_table
+  (lib (name sensorbox)(type Legacy)(uri ${KIPRJMOD}/sensorbox.lib)(options "")(descr ""))
+)

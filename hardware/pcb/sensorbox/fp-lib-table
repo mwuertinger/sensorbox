@@ -1,0 +1,3 @@
+(fp_lib_table
+  (lib (name sensorbox)(type KiCad)(uri ${KIPRJMOD}/sensorbox.pretty)(options "")(descr ""))
+)
