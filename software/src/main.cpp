@@ -5,7 +5,12 @@
 #include <Adafruit_BME280.h>
 #include <string.h>
 #include <SoftwareSerial.h>
+#include <U8g2lib.h>
 #include "config.h"
+
+#define LED_GREEN D6
+#define LED_YELLOW D5
+#define LED_RED D0
 
 Adafruit_BME280 bme;
 bool bmeInitialized = false;
@@ -15,7 +20,28 @@ SoftwareSerial co2Sensor(13, 15);
 PubSubClient mqtt;
 time_t lastUpdate = 0;
 
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+
 void onMqttMessage(char *topic, byte *payload, unsigned int length);
+
+void setupLeds() {
+    pinMode(LED_GREEN, OUTPUT);
+    pinMode(LED_YELLOW, OUTPUT);
+    pinMode(LED_RED, OUTPUT);
+    digitalWrite(LED_GREEN, LOW);
+    digitalWrite(LED_YELLOW, LOW);
+    digitalWrite(LED_RED, LOW);
+}
+
+void setupDisplay() {
+    u8g2.begin();
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_6x10_tf);
+    u8g2.setFontRefHeightExtendedText();
+    u8g2.setDrawColor(1);
+    u8g2.setFontPosTop();
+    u8g2.setFontDirection(0);
+}
 
 void setupWiFi() {
     Serial.print("Connecting to WiFi");
@@ -70,6 +96,8 @@ void setupSensors() {
 
 void setup() {
     Serial.begin(9600);
+    setupLeds();
+    setupDisplay();
     setupWiFi();
     setupNtp();
     setupMqtt();
@@ -154,6 +182,40 @@ void sensorUpdate() {
     if (!mqtt.publish("sensorbox/measurements", payload)) {
         Serial.println("Publishing failed!");
     }
+
+    if (co2 == 0) {
+        digitalWrite(LED_GREEN, LOW);
+        digitalWrite(LED_YELLOW, LOW);
+        digitalWrite(LED_RED, LOW);
+    } else if (co2 < 1000) {
+        digitalWrite(LED_GREEN, HIGH);
+        digitalWrite(LED_YELLOW, LOW);
+        digitalWrite(LED_RED, LOW);
+    } else if (co2 < 2000) {
+        digitalWrite(LED_GREEN, LOW);
+        digitalWrite(LED_YELLOW, HIGH);
+        digitalWrite(LED_RED, LOW);
+    } else {
+        digitalWrite(LED_GREEN, LOW);
+        digitalWrite(LED_YELLOW, LOW);
+        digitalWrite(LED_RED, HIGH);
+    }
+
+    char str[128];
+    u8g2.clearBuffer();
+    
+    if (co2 != 0) {
+    	snprintf(str, 128, "CO2:   %dppm", co2);
+    } else {
+    snprintf(str, 128, "CO2:   ---");
+    }
+    u8g2.drawStr(0, 0, str);
+    snprintf(str, 128, "Temp:  %.1fC", temperature - 273.15);
+    u8g2.drawStr(0, 12, str);
+    snprintf(str, 128, "Humid: %.1f%\n", humidity);
+    u8g2.drawStr(0, 24, str);
+
+    u8g2.sendBuffer();
 }
 
 void loop() {
