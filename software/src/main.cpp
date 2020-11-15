@@ -11,6 +11,10 @@
 #define LED_GREEN D6
 #define LED_YELLOW D5
 #define LED_RED D0
+#define BTN_DARK D3
+
+float pressure = 0, humidity = 0, temperature = 0;
+uint16_t co2 = 0;
 
 Adafruit_BME280 bme;
 bool bmeInitialized = false;
@@ -19,6 +23,9 @@ SoftwareSerial co2Sensor(13, 15);
 
 PubSubClient mqtt;
 time_t lastUpdate = 0;
+
+bool dark = false;
+unsigned long darkLastTrigger = 0;
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 
@@ -41,6 +48,71 @@ void setupDisplay() {
     u8g2.setDrawColor(1);
     u8g2.setFontPosTop();
     u8g2.setFontDirection(0);
+}
+
+void updateDisplay() {
+    u8g2.clearBuffer();
+    if (dark) {
+        u8g2.sendBuffer();
+        return;
+    }
+
+    char str[128];
+
+    if (co2 != 0) {
+        snprintf(str, 128, "CO2:   %dppm", co2);
+    } else {
+        snprintf(str, 128, "CO2:   ---");
+    }
+    u8g2.drawStr(0, 0, str);
+    snprintf(str, 128, "Temp:  %.1fC", temperature - 273.15);
+    u8g2.drawStr(0, 12, str);
+    snprintf(str, 128, "Humid: %.1f%%\n", humidity);
+    u8g2.drawStr(0, 24, str);
+
+    u8g2.sendBuffer();
+}
+
+void updateLeds() {
+    if (dark) {
+        digitalWrite(LED_GREEN, LOW);
+        digitalWrite(LED_YELLOW, LOW);
+        digitalWrite(LED_RED, LOW);
+    } else if (co2 == 0) {
+        digitalWrite(LED_GREEN, LOW);
+        digitalWrite(LED_YELLOW, LOW);
+        digitalWrite(LED_RED, LOW);
+    } else if (co2 < 1000) {
+        digitalWrite(LED_GREEN, HIGH);
+        digitalWrite(LED_YELLOW, LOW);
+        digitalWrite(LED_RED, LOW);
+    } else if (co2 < 2000) {
+        digitalWrite(LED_GREEN, LOW);
+        digitalWrite(LED_YELLOW, HIGH);
+        digitalWrite(LED_RED, LOW);
+    } else {
+        digitalWrite(LED_GREEN, LOW);
+        digitalWrite(LED_YELLOW, LOW);
+        digitalWrite(LED_RED, HIGH);
+    }
+}
+
+ICACHE_RAM_ATTR void onDark() {
+	// debounce by ignoring interrupts for 100ms
+	if (millis() - darkLastTrigger < 100) {
+		return;
+	}
+	dark = !dark;
+	darkLastTrigger = millis();
+	Serial.printf("dark = %d\n\r", dark);
+
+	updateDisplay();
+	updateLeds();
+}
+
+void setupButton() {
+    pinMode(BTN_DARK, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(BTN_DARK), onDark, FALLING);
 }
 
 void setupWiFi() {
@@ -97,6 +169,7 @@ void setupSensors() {
 void setup() {
     Serial.begin(9600);
     setupLeds();
+    setupButton();
     setupDisplay();
     setupWiFi();
     setupNtp();
@@ -126,8 +199,6 @@ void sensorUpdate() {
     lastUpdate = now;
 
     unsigned long uptime = millis() / 1000; // system uptime in seconds
-    float pressure = 0, humidity = 0, temperature = 0;
-    uint16_t co2 = 0;
 
     if (bmeInitialized) {
         pressure = bme.readPressure() / 100.0;
@@ -183,39 +254,8 @@ void sensorUpdate() {
         Serial.println("Publishing failed!");
     }
 
-    if (co2 == 0) {
-        digitalWrite(LED_GREEN, LOW);
-        digitalWrite(LED_YELLOW, LOW);
-        digitalWrite(LED_RED, LOW);
-    } else if (co2 < 1000) {
-        digitalWrite(LED_GREEN, HIGH);
-        digitalWrite(LED_YELLOW, LOW);
-        digitalWrite(LED_RED, LOW);
-    } else if (co2 < 2000) {
-        digitalWrite(LED_GREEN, LOW);
-        digitalWrite(LED_YELLOW, HIGH);
-        digitalWrite(LED_RED, LOW);
-    } else {
-        digitalWrite(LED_GREEN, LOW);
-        digitalWrite(LED_YELLOW, LOW);
-        digitalWrite(LED_RED, HIGH);
-    }
-
-    char str[128];
-    u8g2.clearBuffer();
-    
-    if (co2 != 0) {
-    	snprintf(str, 128, "CO2:   %dppm", co2);
-    } else {
-    snprintf(str, 128, "CO2:   ---");
-    }
-    u8g2.drawStr(0, 0, str);
-    snprintf(str, 128, "Temp:  %.1fC", temperature - 273.15);
-    u8g2.drawStr(0, 12, str);
-    snprintf(str, 128, "Humid: %.1f%\n", humidity);
-    u8g2.drawStr(0, 24, str);
-
-    u8g2.sendBuffer();
+    updateDisplay();
+    updateLeds();
 }
 
 void loop() {
