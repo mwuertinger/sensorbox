@@ -113,7 +113,7 @@ ICACHE_RAM_ATTR void onDisplay() {
 
 void setupButton() {
     pinMode(BTN_DISPLAY, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(BTN_DISPLAY), onDisplay, FALLING);
+    attachInterrupt(digitalPinToInterrupt(BTN_DISPLAY), onDisplay, RISING);
 }
 
 void setupWiFi() {
