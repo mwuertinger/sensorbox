@@ -207,45 +207,42 @@ void sensorUpdate() {
         temperature = bme.readTemperature() + 273.15; // convert to Kelvin
     }
 
-    // CO2 sensor needs 300s to warm up
-    if (uptime > 300) {
-        uint8_t cmdRead[] = {0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};
-        size_t res = co2Sensor.write(cmdRead, 9);
-        if (res != 9) {
-            Serial.printf("CO2 sensor: writing failed: %d\r\n", res);
-            return;
+    uint8_t cmdRead[] = {0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};
+    size_t res = co2Sensor.write(cmdRead, 9);
+    if (res != 9) {
+        Serial.printf("CO2 sensor: writing failed: %d\r\n", res);
+        return;
+    }
+    co2Sensor.flush();
+    
+    uint8_t buf[9];
+    int n = 0;
+    // try to read from serial port up to 10000 times
+    // usually data arrives after ~1300 iterations
+    for (int i = 0; i < 10000 && n < 9; i++) {
+        int val = co2Sensor.read();
+        if (val < 0) {
+            continue;
         }
-        co2Sensor.flush();
-
-        uint8_t buf[9];
-        int n = 0;
-        // try to read from serial port up to 10000 times
-        // usually data arrives after ~1300 iterations
-        for (int i = 0; i < 10000 && n < 9; i++) {
-            int val = co2Sensor.read();
-            if (val < 0) {
-                continue;
-            }
-            buf[n] = val;
-            n++;
-        }
-
-        // verify checksum
-        uint8_t checksum = 0;
-        for (uint8_t i = 1; i < 8; i++) {
-            checksum += buf[i];
-        }
-        checksum = 0xFF - checksum;
-        checksum += 1;
-        if (buf[8] != checksum) {
-            Serial.println("CO2 sensor: checksum error!");
-        } else {
-	        co2 = 256 * buf[2] + buf[3];
-		if (co2 < 200 || co2 > 10000) {
-			Serial.printf("CO2 sensor: discarding inplausible value: %d\r\n", co2);
-			co2 = 0;
-		}
-	}
+        buf[n] = val;
+        n++;
+    }
+    
+    // verify checksum
+    uint8_t checksum = 0;
+    for (uint8_t i = 1; i < 8; i++) {
+        checksum += buf[i];
+    }
+    checksum = 0xFF - checksum;
+    checksum += 1;
+    if (buf[8] != checksum) {
+        Serial.println("CO2 sensor: checksum error!");
+    } else {
+            co2 = 256 * buf[2] + buf[3];
+    	if (co2 < 200 || co2 > 10000) {
+    	    Serial.printf("CO2 sensor: discarding inplausible value: %d\r\n", co2);
+    	    co2 = 0;
+    	}
     }
 
     char payload[128];
