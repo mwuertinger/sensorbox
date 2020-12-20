@@ -43,7 +43,6 @@ void setupLeds() {
 void setupDisplay() {
     u8g2.begin();
     u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_6x10_tf);
     u8g2.setFontRefHeightExtendedText();
     u8g2.setDrawColor(1);
     u8g2.setFontPosTop();
@@ -57,18 +56,20 @@ void updateDisplay() {
         return;
     }
 
+    u8g2.setFont(u8g2_font_courB18_tf);
+
     char str[128];
 
     if (co2 != 0) {
-        snprintf(str, 128, "CO2:   %dppm", co2);
+        snprintf(str, 128, "%dppm", co2);
     } else {
-        snprintf(str, 128, "CO2:   ---");
+        snprintf(str, 128, "---");
     }
     u8g2.drawStr(0, 0, str);
-    snprintf(str, 128, "Temp:  %.1fC", temperature - 273.15);
-    u8g2.drawStr(0, 12, str);
-    snprintf(str, 128, "Humid: %.1f%%\n", humidity);
-    u8g2.drawStr(0, 24, str);
+    snprintf(str, 128, "%.1fC", temperature - 273.15);
+    u8g2.drawStr(0, 23, str);
+    snprintf(str, 128, "%.1f%%\n", humidity);
+    u8g2.drawStr(0, 46, str);
 
     u8g2.sendBuffer();
 }
