@@ -6,6 +6,6 @@ jobs:
     steps:
       - run: pip install platformio
       - checkout
-      - run: cd software && platformio lib install 31 89 166 1089
+      - run: cd software && platformio lib install 31 89 166 1089 942
       - run: cd software && platformio run
 
