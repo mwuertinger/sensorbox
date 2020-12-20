@@ -11,7 +11,7 @@
 #define LED_GREEN D6
 #define LED_YELLOW D5
 #define LED_RED D0
-#define BTN_DARK D3
+#define BTN_DISPLAY D3
 
 float pressure = 0, humidity = 0, temperature = 0;
 uint16_t co2 = 0;
@@ -24,8 +24,8 @@ SoftwareSerial co2Sensor(13, 15);
 PubSubClient mqtt;
 time_t lastUpdate = 0;
 
-bool dark = false;
-unsigned long darkLastTrigger = 0;
+bool display = true;
+unsigned long displayLastTrigger = 0;
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 
@@ -51,7 +51,7 @@ void setupDisplay() {
 
 void updateDisplay() {
     u8g2.clearBuffer();
-    if (dark) {
+    if (!display) {
         u8g2.sendBuffer();
         return;
     }
@@ -75,7 +75,7 @@ void updateDisplay() {
 }
 
 void updateLeds() {
-    if (dark) {
+    if (!display) {
         digitalWrite(LED_GREEN, LOW);
         digitalWrite(LED_YELLOW, LOW);
         digitalWrite(LED_RED, LOW);
@@ -98,22 +98,22 @@ void updateLeds() {
     }
 }
 
-ICACHE_RAM_ATTR void onDark() {
+ICACHE_RAM_ATTR void onDisplay() {
 	// debounce by ignoring interrupts for 100ms
-	if (millis() - darkLastTrigger < 100) {
+	if (millis() - displayLastTrigger < 100) {
 		return;
 	}
-	dark = !dark;
-	darkLastTrigger = millis();
-	Serial.printf("dark = %d\n\r", dark);
+	display = !display;
+	displayLastTrigger = millis();
+	Serial.printf("display = %d\n\r", display);
 
 	updateDisplay();
 	updateLeds();
 }
 
 void setupButton() {
-    pinMode(BTN_DARK, INPUT_PULLUP);
-    attachInterrupt(digitalPinToInterrupt(BTN_DARK), onDark, FALLING);
+    pinMode(BTN_DISPLAY, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(BTN_DISPLAY), onDisplay, FALLING);
 }
 
 void setupWiFi() {
