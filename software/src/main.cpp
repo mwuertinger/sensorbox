@@ -6,12 +6,15 @@
 #include <string.h>
 #include <SoftwareSerial.h>
 #include <U8g2lib.h>
+#include <ESP8266httpUpdate.h>
 #include "config.h"
 
 #define LED_GREEN D6
 #define LED_YELLOW D5
 #define LED_RED D0
 #define BTN_DISPLAY D3
+
+char hostname[64];
 
 float pressure = 0, humidity = 0, temperature = 0;
 uint16_t co2 = 0;
@@ -119,6 +122,7 @@ void setupButton() {
 void setupWiFi() {
     Serial.print("Connecting to WiFi");
     WiFi.setAutoReconnect(true);
+    WiFi.hostname(hostname);
     WiFi.begin(config.ssid, config.password);
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
@@ -150,10 +154,41 @@ void setupMqtt() {
     mqtt.setClient(*client);
     mqtt.setServer(config.mqttServerIP, config.mqttServerPort);
     mqtt.setCallback(onMqttMessage);
-    mqtt.subscribe("sensorbox");
-    char mqttClient[64];
-    snprintf(mqttClient, 64, "sensorbox%02d", config.devId);
-    mqtt.subscribe(mqttClient);
+}
+
+void onOtaStart() {
+    Serial.println("OTA begin");
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_t0_15_tf);
+    u8g2.drawStr(4, 0, "Updating...");
+    u8g2.drawFrame(4, 20, 120, 20);
+    u8g2.sendBuffer();
+}
+
+void onOtaEnd() {
+    Serial.println("OTA end");
+}
+
+void onOtaProgress(int cur, int total) {
+    Serial.printf("OTA progress: %d/%d\r\n", cur, total);
+    u8g2.drawBox(4, 20, int(float(cur)/float(total)*120.0), 20);
+    u8g2.sendBuffer();
+}
+
+void onOtaError(int err) {
+    Serial.printf("OTA error: %d\r\n", err);
+    char str[128];
+    snprintf(str, 128, "Error: %d", err);
+    u8g2.drawStr(0, 50, str);
+    u8g2.sendBuffer();
+}
+
+void setupOta(){
+    ESPhttpUpdate.setLedPin(LED_BUILTIN, LOW);
+    ESPhttpUpdate.onStart(onOtaStart);
+    ESPhttpUpdate.onEnd(onOtaEnd);
+    ESPhttpUpdate.onProgress(onOtaProgress);
+    ESPhttpUpdate.onError(onOtaError);
 }
 
 void setupSensors() {
@@ -167,7 +202,20 @@ void setupSensors() {
     co2Sensor.begin(9600);
 }
 
+void calibrateCo2() {
+    Serial.printf("Calibrating CO2 sensor\r\n");
+    uint8_t cmdCalibrate[] = {0xFF, 0x01, 0x87, 0x00, 0x00, 0x00, 0x00, 0x00, 0x78};
+    size_t res = co2Sensor.write(cmdCalibrate, 9);
+    if (res != 9) {
+        Serial.printf("CO2 sensor: writing failed: %d\r\n", res);
+        return;
+    }
+    co2Sensor.flush();
+}
+
 void setup() {
+    snprintf(hostname, 64, "sensorbox%02d", config.devId);
+
     Serial.begin(9600);
     setupLeds();
     setupButton();
@@ -175,7 +223,9 @@ void setup() {
     setupWiFi();
     setupNtp();
     setupMqtt();
+    setupOta();
     setupSensors();
+    calibrateCo2();
 }
 
 void mqttReconnect() {
@@ -184,6 +234,8 @@ void mqttReconnect() {
         char mqttClient[64];
         snprintf(mqttClient, 64, "sensorbox%02d", config.devId);
         if (mqtt.connect(mqttClient, config.mqttUser, config.mqttPassword)) {
+            mqtt.subscribe("sensorbox");
+            mqtt.subscribe(hostname);
             Serial.println(" done");
         } else {
             Serial.printf("failed (state=%d), try again in 5 seconds\n", mqtt.state());
@@ -267,5 +319,10 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length) {
     memcpy(str, payload, length);
     str[length] = 0;
     Serial.printf("MQTT message (%s): %s\n", topic, str);
+
+    if(strcmp(topic, "sensorbox") == 0 && strncmp(str, "ota", length) == 0) {
+        ESPhttpUpdate.update("hal", 10000, "/sensorbox.bin");
+    }
+
     free(str);
 }
