@@ -225,7 +225,6 @@ void setup() {
     setupMqtt();
     setupOta();
     setupSensors();
-    calibrateCo2();
 }
 
 void mqttReconnect() {
@@ -320,8 +319,11 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length) {
     str[length] = 0;
     Serial.printf("MQTT message (%s): %s\n", topic, str);
 
-    if(strcmp(topic, "sensorbox") == 0 && strncmp(str, "ota", length) == 0) {
+    if(strcmp(topic, hostname) == 0 && strncmp(str, "ota", length) == 0) {
         ESPhttpUpdate.update("hal", 10000, "/sensorbox.bin");
+    }
+    if(strcmp(topic, hostname) == 0 && strncmp(str, "calibrate_co2", length) == 0) {
+        calibrateCo2();
     }
 
     free(str);
