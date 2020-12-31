@@ -325,6 +325,16 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length) {
     if(strcmp(topic, hostname) == 0 && strncmp(str, "calibrate_co2", length) == 0) {
         calibrateCo2();
     }
+    if(strcmp(topic, hostname) == 0 && strncmp(str, "display_on", length) == 0) {
+        display = true;
+        updateDisplay();
+	updateLeds();
+    }
+    if(strcmp(topic, hostname) == 0 && strncmp(str, "display_off", length) == 0) {
+        display = false;
+        updateDisplay();
+	updateLeds();
+    }
 
     free(str);
 }
