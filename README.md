@@ -35,6 +35,11 @@ The PCB was designed with KiCad. The following parts are required:
 - 1x Button
 
 ### Pictures
+#### Rendered PCB
 ![Rendered PCB](/doc/img/pcb-render.webp)
+
+#### PCB Front and Back
 ![PCB Front and Back](/doc/img/pcb-front-and-back.webp)
+
+#### Assembled PCB
 ![Assembled PCB](/doc/img/pcb-assembled.webp)
