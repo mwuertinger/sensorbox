@@ -102,16 +102,16 @@ void updateLeds() {
 }
 
 ICACHE_RAM_ATTR void onDisplay() {
-	// debounce by ignoring interrupts for 100ms
-	if (millis() - displayLastTrigger < 100) {
-		return;
-	}
-	display = !display;
-	displayLastTrigger = millis();
-	Serial.printf("display = %d\n\r", display);
+    // debounce by ignoring interrupts for 100ms
+    if (millis() - displayLastTrigger < 100) {
+        return;
+    }
+    display = !display;
+    displayLastTrigger = millis();
+    Serial.printf("display = %d\n\r", display);
 
-	updateDisplay();
-	updateLeds();
+    updateDisplay();
+    updateLeds();
 }
 
 void setupButton() {
@@ -171,7 +171,7 @@ void onOtaEnd() {
 
 void onOtaProgress(int cur, int total) {
     Serial.printf("OTA progress: %d/%d\r\n", cur, total);
-    u8g2.drawBox(4, 20, int(float(cur)/float(total)*120.0), 20);
+    u8g2.drawBox(4, 20, int(float(cur) / float(total) * 120.0), 20);
     u8g2.sendBuffer();
 }
 
@@ -183,7 +183,7 @@ void onOtaError(int err) {
     u8g2.sendBuffer();
 }
 
-void setupOta(){
+void setupOta() {
     ESPhttpUpdate.setLedPin(LED_BUILTIN, LOW);
     ESPhttpUpdate.onStart(onOtaStart);
     ESPhttpUpdate.onEnd(onOtaEnd);
@@ -265,7 +265,7 @@ void sensorUpdate() {
         return;
     }
     co2Sensor.flush();
-    
+
     uint8_t buf[9];
     int n = 0;
     // try to read from serial port up to 10000 times
@@ -278,7 +278,7 @@ void sensorUpdate() {
         buf[n] = val;
         n++;
     }
-    
+
     // verify checksum
     uint8_t checksum = 0;
     for (uint8_t i = 1; i < 8; i++) {
@@ -289,11 +289,11 @@ void sensorUpdate() {
     if (buf[8] != checksum) {
         Serial.println("CO2 sensor: checksum error!");
     } else {
-            co2 = 256 * buf[2] + buf[3];
-    	if (co2 < 200 || co2 > 10000) {
-    	    Serial.printf("CO2 sensor: discarding inplausible value: %d\r\n", co2);
-    	    co2 = 0;
-    	}
+        co2 = 256 * buf[2] + buf[3];
+        if (co2 < 200 || co2 > 10000) {
+            Serial.printf("CO2 sensor: discarding inplausible value: %d\r\n", co2);
+            co2 = 0;
+        }
     }
 
     char payload[128];
@@ -319,21 +319,21 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length) {
     str[length] = 0;
     Serial.printf("MQTT message (%s): %s\n", topic, str);
 
-    if(strcmp(topic, hostname) == 0 && strncmp(str, "ota", length) == 0) {
+    if (strcmp(topic, hostname) == 0 && strncmp(str, "ota", length) == 0) {
         ESPhttpUpdate.update("hal", 10000, "/sensorbox.bin");
     }
-    if(strcmp(topic, hostname) == 0 && strncmp(str, "calibrate_co2", length) == 0) {
+    if (strcmp(topic, hostname) == 0 && strncmp(str, "calibrate_co2", length) == 0) {
         calibrateCo2();
     }
-    if(strcmp(topic, hostname) == 0 && strncmp(str, "display_on", length) == 0) {
+    if (strcmp(topic, hostname) == 0 && strncmp(str, "display_on", length) == 0) {
         display = true;
         updateDisplay();
-	updateLeds();
+        updateLeds();
     }
-    if(strcmp(topic, hostname) == 0 && strncmp(str, "display_off", length) == 0) {
+    if (strcmp(topic, hostname) == 0 && strncmp(str, "display_off", length) == 0) {
         display = false;
         updateDisplay();
-	updateLeds();
+        updateLeds();
     }
 
     free(str);
