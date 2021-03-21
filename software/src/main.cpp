@@ -61,23 +61,31 @@ void fatalError(char *msg) {
 }
 
 void setupConfig() {
+    Serial.println("setupConfig()");
+
     const size_t EEPROM_SIZE = 1024;
     EEPROM.begin(EEPROM_SIZE);
     // data layout:
     // 4 bytes = message length
     // 4 bytes = CRC checksum
     // protocol buffers message
-    uint8_t *data = EEPROM.getDataPtr() + 8; // skip length and checksum field
     uint32_t *pMessageLength = (uint32_t*) EEPROM.getDataPtr();
-    uint32_t *pMessageChecksum = (uint32_t*) EEPROM.getDataPtr() + 4;
+    uint32_t *pMessageChecksum = (uint32_t*) (EEPROM.getDataPtr() + 4);
+    uint8_t *data = EEPROM.getDataPtr() + 8; // skip length and checksum field
 
-    CRC32 crc;
-    for (size_t i = 0; i < *pMessageLength; i++) {
-        crc.update(data[i]);
+    Serial.printf("setupConfig(): *pMessageLength=%d\n\r", *pMessageLength);
+
+    uint32_t checksum = 42;
+    if (*pMessageLength < EEPROM_SIZE) {
+        Serial.printf("setupConfig(): calculating checksum\n\r", *pMessageLength);
+        CRC32 crc;
+        for (size_t i = 0; i < *pMessageLength; i++) {
+            crc.update(data[i]);
+        }
+        checksum = crc.finalize();
     }
-    uint32_t checksum = crc.finalize();
     if (checksum != *pMessageChecksum) {
-        Serial.printf("setupConfig: checksum mismatch: 0x%08x != 0x%08x", checksum, *pMessageChecksum);
+        Serial.printf("setupConfig: checksum mismatch: 0x%08x != 0x%08x\n\r", checksum, *pMessageChecksum);
 
         // persist current config
 
@@ -95,11 +103,19 @@ void setupConfig() {
         bool pb_encode_status = pb_encode(&stream, ConfigPb_fields, &configPb);
         int message_length = stream.bytes_written;
         *pMessageLength = message_length;
+
+        CRC32 crc;
+        for (size_t i = 0; i < message_length; i++) {
+            crc.update(data[i]);
+        }
+        uint32_t checksum = crc.finalize();
+        *pMessageChecksum = checksum;
+
         bool eeprom_commit_status = EEPROM.commit();
 
-        Serial.printf("setupConfig: pb_encode=%s message_length=%d, eeprom_commit_status=%s\n",
+        Serial.printf("setupConfig: pb_encode=%s message_length=%d, eeprom_commit_status=%s, *pMessageChecksum=%08x, checksum=%08x\n\r",
                       pb_encode_status ? "true" : "false", message_length,
-                      eeprom_commit_status ? "true" : "false");
+                      eeprom_commit_status ? "true" : "false", *pMessageChecksum, checksum);
     }
 
     {
@@ -295,9 +311,9 @@ void calibrateCo2() {
 
 void setup() {
     Serial.begin(9600);
-    snprintf(hostname, 64, "sensorbox%02d", configPb.devId);
     setupLeds();
     setupConfig();
+    snprintf(hostname, 64, "sensorbox%02d", configPb.devId);
     setupButton();
     setupDisplay();
     setupWiFi();
