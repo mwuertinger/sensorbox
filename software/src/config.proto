@@ -1,0 +1,14 @@
+syntax = "proto3";
+import 'nanopb.proto';
+option go_package = "github.com/mwuertinger/sensorbox/config/pb";
+
+message ConfigPb   {
+  uint32 devId = 1;
+  string wlan_ssid = 2 [(nanopb).max_length = 63];
+  string wlan_password = 3 [(nanopb).max_length = 63];
+  string mqtt_addr = 4 [(nanopb).max_length = 63];
+  uint32 mqtt_port = 5;
+  string mqtt_user = 6 [(nanopb).max_length = 63];
+  string mqtt_passwd = 7 [(nanopb).max_length = 63];
+  string mqtt_pubkey = 8 [(nanopb).max_length = 1023];
+}

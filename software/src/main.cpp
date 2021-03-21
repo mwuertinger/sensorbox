@@ -1,19 +1,26 @@
 #include <Adafruit_BME280.h>
 #include <Adafruit_Sensor.h>
+#include <CRC32.h>
+#include <EEPROM.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266httpUpdate.h>
+#include <pb_encode.h>
+#include <pb_decode.h>
 #include <PubSubClient.h>
 #include <SoftwareSerial.h>
 #include <string.h>
 #include <U8g2lib.h>
 #include <Wire.h>
 
+#include "config.pb.h"
 #include "config.h"
 
 #define LED_GREEN D6
 #define LED_YELLOW D5
 #define LED_RED D0
 #define BTN_DISPLAY D3
+
+ConfigPb configPb = ConfigPb_init_zero;
 
 char hostname[64];
 
@@ -34,6 +41,79 @@ unsigned long displayLastTrigger = 0;
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 
 void onMqttMessage(char *topic, byte *payload, unsigned int length);
+
+void fatalError(char *msg) {
+    Serial.println(msg);
+    while(true) {
+        digitalWrite(LED_GREEN, HIGH);
+        digitalWrite(LED_YELLOW, LOW);
+        digitalWrite(LED_RED, LOW);
+        delay(200);
+        digitalWrite(LED_GREEN, LOW);
+        digitalWrite(LED_YELLOW, HIGH);
+        digitalWrite(LED_RED, LOW);
+        delay(200);
+        digitalWrite(LED_GREEN, LOW);
+        digitalWrite(LED_YELLOW, LOW);
+        digitalWrite(LED_RED, HIGH);
+        delay(200);
+    }
+}
+
+void setupConfig() {
+    const size_t EEPROM_SIZE = 1024;
+    EEPROM.begin(EEPROM_SIZE);
+    // data layout:
+    // 4 bytes = message length
+    // 4 bytes = CRC checksum
+    // protocol buffers message
+    uint8_t *data = EEPROM.getDataPtr() + 8; // skip length and checksum field
+    uint32_t *pMessageLength = (uint32_t*) EEPROM.getDataPtr();
+    uint32_t *pMessageChecksum = (uint32_t*) EEPROM.getDataPtr() + 4;
+
+    CRC32 crc;
+    for (size_t i = 0; i < *pMessageLength; i++) {
+        crc.update(data[i]);
+    }
+    uint32_t checksum = crc.finalize();
+    if (checksum != *pMessageChecksum) {
+        Serial.printf("setupConfig: checksum mismatch: 0x%08x != 0x%08x", checksum, *pMessageChecksum);
+
+        // persist current config
+
+        configPb.devId = config.devId;
+        strncpy(configPb.wlan_ssid, config.ssid, 64);
+        strncpy(configPb.wlan_password, config.password, 64);
+        snprintf(configPb.mqtt_addr, 64, "%d.%d.%d.%d", config.mqttServerIP[0], config.mqttServerIP[1],
+                 config.mqttServerIP[2], config.mqttServerIP[3]);
+        configPb.mqtt_port = config.mqttServerPort;
+        strncpy(configPb.mqtt_user, config.mqttUser, 64);
+        strncpy(configPb.mqtt_passwd, config.mqttPassword, 64);
+        strncpy(configPb.mqtt_pubkey, config.mqttServerPubKey, 1024);
+
+        pb_ostream_t stream = pb_ostream_from_buffer(data, EEPROM_SIZE);
+        bool pb_encode_status = pb_encode(&stream, ConfigPb_fields, &configPb);
+        int message_length = stream.bytes_written;
+        *pMessageLength = message_length;
+        bool eeprom_commit_status = EEPROM.commit();
+
+        Serial.printf("setupConfig: pb_encode=%s message_length=%d, eeprom_commit_status=%s\n",
+                      pb_encode_status ? "true" : "false", message_length,
+                      eeprom_commit_status ? "true" : "false");
+    }
+
+    {
+        uint32_t message_length = *pMessageLength;
+        Serial.printf("setupConfig: Read message_length=%d\n\r", message_length);
+        pb_istream_t stream = pb_istream_from_buffer(data, message_length);
+        bool status = pb_decode(&stream, ConfigPb_fields, &configPb);
+        if (status) {
+            Serial.println("setupConfig: Config decoded successfully");
+        } else {
+            fatalError("setupConfig: Config decoding failed!");
+        }
+    }
+}
 
 void setupLeds() {
     pinMode(LED_GREEN, OUTPUT);
@@ -124,7 +204,7 @@ void setupWiFi() {
     Serial.print("Connecting to WiFi");
     WiFi.setAutoReconnect(true);
     WiFi.hostname(hostname);
-    WiFi.begin(config.ssid, config.password);
+    WiFi.begin(configPb.wlan_ssid, configPb.wlan_password);
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
@@ -146,14 +226,13 @@ void setupNtp() {
 
 void setupMqtt() {
     BearSSL::PublicKey *pubKey = new BearSSL::PublicKey();
-    if (!pubKey->parse((config.mqttServerPubKey))) {
-        Serial.println("Parsing pub key failed");
-        while (true);
+    if (!pubKey->parse((configPb.mqtt_pubkey))) {
+        fatalError("Parsing pub key failed!");
     }
     WiFiClientSecure *client = new WiFiClientSecure();
     client->setKnownKey(pubKey);
     mqtt.setClient(*client);
-    mqtt.setServer(config.mqttServerIP, config.mqttServerPort);
+    mqtt.setServer(configPb.mqtt_addr, configPb.mqtt_port);
     mqtt.setCallback(onMqttMessage);
 }
 
@@ -215,10 +294,10 @@ void calibrateCo2() {
 }
 
 void setup() {
-    snprintf(hostname, 64, "sensorbox%02d", config.devId);
-
     Serial.begin(9600);
+    snprintf(hostname, 64, "sensorbox%02d", configPb.devId);
     setupLeds();
+    setupConfig();
     setupButton();
     setupDisplay();
     setupWiFi();
@@ -232,8 +311,8 @@ void mqttReconnect() {
     while (!mqtt.connected()) {
         Serial.print("Connecting to MQTT server...");
         char mqttClient[64];
-        snprintf(mqttClient, 64, "sensorbox%02d", config.devId);
-        if (mqtt.connect(mqttClient, config.mqttUser, config.mqttPassword)) {
+        snprintf(mqttClient, 64, "sensorbox%02d", configPb.devId);
+        if (mqtt.connect(mqttClient, configPb.mqtt_user, configPb.mqtt_passwd)) {
             mqtt.subscribe("sensorbox");
             mqtt.subscribe(hostname);
             Serial.println(" done");
@@ -298,7 +377,7 @@ void sensorUpdate() {
     }
 
     char payload[128];
-    snprintf(payload, 128, "%d,%ld,%ld,%f,%f,%f,%d", config.devId, now, uptime, pressure, humidity, temperature, co2);
+    snprintf(payload, 128, "%d,%ld,%ld,%f,%f,%f,%d", configPb.devId, now, uptime, pressure, humidity, temperature, co2);
     Serial.printf("Publishing: %s\r\n", payload);
     if (!mqtt.publish("sensorbox/measurements", payload)) {
         Serial.println("Publishing failed!");
