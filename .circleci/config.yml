@@ -6,5 +6,5 @@ jobs:
     steps:
       - run: pip install platformio==5.0.3
       - checkout
-      - run: cd software && platformio run
+      - run: cd firmware && platformio run
 
