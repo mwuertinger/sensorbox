@@ -413,7 +413,7 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length) {
     char *str = (char *) malloc(length + 1);
     memcpy(str, payload, length);
     str[length] = 0;
-    Serial.printf("MQTT message (%s): %s\n", topic, str);
+    Serial.printf("MQTT message (%s): %s\r\n", topic, str);
 
     if (strcmp(topic, hostname) == 0 && strncmp(str, "ota", length) == 0) {
         ESPhttpUpdate.update("hal", 10000, "/sensorbox.bin");
