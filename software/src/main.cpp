@@ -186,6 +186,13 @@ void setupButton() {
 
 void setupWiFi() {
     Serial.print("Connecting to WiFi");
+
+    u8g2.setFont(u8g2_font_t0_11_tf);
+    u8g2.clearBuffer();
+    u8g2.drawStr(0, 0, hostname);
+    u8g2.drawStr(0, 12, "Connecting to WiFi...");
+    u8g2.sendBuffer();
+
     WiFi.setAutoReconnect(true);
     WiFi.hostname(hostname);
     WiFi.begin(configPb.wlan_ssid, configPb.wlan_password);
@@ -194,6 +201,10 @@ void setupWiFi() {
         Serial.print(".");
     }
     Serial.println(WiFi.localIP());
+    u8g2.clearBuffer();
+    u8g2.drawStr(0, 0, hostname);
+    u8g2.drawStr(0, 12, WiFi.localIP().toString().c_str());
+    u8g2.sendBuffer();
 }
 
 void setupNtp() {
