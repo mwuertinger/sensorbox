@@ -6,5 +6,12 @@ jobs:
     steps:
       - run: pip install platformio==5.1.1
       - checkout
-      - run: cd firmware && platformio run
+      - run: >
+          pushd firmware
+          platformio run
+          popd
+          pushd config-tool
+          ./protoc.sh
+          go build
+          popd
 
