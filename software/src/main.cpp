@@ -13,7 +13,7 @@
 #include <Wire.h>
 
 #include "config.pb.h"
-#include "config.h"
+
 
 #define LED_GREEN D6
 #define LED_YELLOW D5
@@ -85,49 +85,17 @@ void setupConfig() {
         checksum = crc.finalize();
     }
     if (checksum != *pMessageChecksum) {
-        Serial.printf("setupConfig: checksum mismatch: 0x%08x != 0x%08x\n\r", checksum, *pMessageChecksum);
-
-        // persist current config
-
-        configPb.devId = config.devId;
-        strncpy(configPb.wlan_ssid, config.ssid, 64);
-        strncpy(configPb.wlan_password, config.password, 64);
-        snprintf(configPb.mqtt_addr, 64, "%d.%d.%d.%d", config.mqttServerIP[0], config.mqttServerIP[1],
-                 config.mqttServerIP[2], config.mqttServerIP[3]);
-        configPb.mqtt_port = config.mqttServerPort;
-        strncpy(configPb.mqtt_user, config.mqttUser, 64);
-        strncpy(configPb.mqtt_passwd, config.mqttPassword, 64);
-        strncpy(configPb.mqtt_pubkey, config.mqttServerPubKey, 1024);
-
-        pb_ostream_t stream = pb_ostream_from_buffer(data, EEPROM_SIZE);
-        bool pb_encode_status = pb_encode(&stream, ConfigPb_fields, &configPb);
-        int message_length = stream.bytes_written;
-        *pMessageLength = message_length;
-
-        CRC32 crc;
-        for (size_t i = 0; i < message_length; i++) {
-            crc.update(data[i]);
-        }
-        uint32_t checksum = crc.finalize();
-        *pMessageChecksum = checksum;
-
-        bool eeprom_commit_status = EEPROM.commit();
-
-        Serial.printf("setupConfig: pb_encode=%s message_length=%d, eeprom_commit_status=%s, *pMessageChecksum=%08x, checksum=%08x\n\r",
-                      pb_encode_status ? "true" : "false", message_length,
-                      eeprom_commit_status ? "true" : "false", *pMessageChecksum, checksum);
+        fatalError("setupConfig: Config checksum error!");
     }
 
-    {
-        uint32_t message_length = *pMessageLength;
-        Serial.printf("setupConfig: Read message_length=%d\n\r", message_length);
-        pb_istream_t stream = pb_istream_from_buffer(data, message_length);
-        bool status = pb_decode(&stream, ConfigPb_fields, &configPb);
-        if (status) {
-            Serial.println("setupConfig: Config decoded successfully");
-        } else {
-            fatalError("setupConfig: Config decoding failed!");
-        }
+    uint32_t message_length = *pMessageLength;
+    Serial.printf("setupConfig: Read message_length=%d\n\r", message_length);
+    pb_istream_t stream = pb_istream_from_buffer(data, message_length);
+    bool status = pb_decode(&stream, ConfigPb_fields, &configPb);
+    if (status) {
+        Serial.println("setupConfig: Config decoded successfully");
+    } else {
+        fatalError("setupConfig: Config decoding failed!");
     }
 }
 
