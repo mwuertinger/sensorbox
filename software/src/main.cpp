@@ -89,7 +89,7 @@ void setupConfig() {
     }
 
     uint32_t message_length = *pMessageLength;
-    Serial.printf("setupConfig: Read message_length=%d\n\r", message_length);
+    Serial.printf("setupConfig: Read message_length=%d\r\n", message_length);
     pb_istream_t stream = pb_istream_from_buffer(data, message_length);
     bool status = pb_decode(&stream, ConfigPb_fields, &configPb);
     if (status) {
