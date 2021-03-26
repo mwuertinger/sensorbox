@@ -7,11 +7,11 @@ jobs:
       - run: pip install platformio==5.1.1
       - checkout
       - run: >
-          pushd firmware
-          platformio run
-          popd
-          pushd config-tool
-          ./protoc.sh
-          go build
+          pushd firmware &&
+          platformio run &&
+          popd &&
+          ls -l &&
+          pushd config-tool &&
+          ./protoc.sh &&
           popd
 
