@@ -2,7 +2,7 @@ version: 2
 jobs:
   build:
     docker:
-      - image: python:2.7
+      - image: python:3.9.2-slim
     steps:
       - run: pip install platformio==5.0.3
       - checkout
