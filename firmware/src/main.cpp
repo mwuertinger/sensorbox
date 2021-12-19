@@ -395,7 +395,8 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length) {
     Serial.printf("MQTT message (%s): %s\r\n", topic, str);
 
     if (strcmp(topic, hostname) == 0 && strncmp(str, "ota", length) == 0) {
-        ESPhttpUpdate.update("hal", 10000, "/sensorbox.bin");
+	WiFiClient client;
+        ESPhttpUpdate.update(client, String("hal"), 10000, String("/sensorbox.bin"));
     }
     if (strcmp(topic, hostname) == 0 && strncmp(str, "calibrate_co2", length) == 0) {
         calibrateCo2();
