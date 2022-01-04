@@ -4,3 +4,4 @@ config.h
 CMakeLists.txt
 CMakeListsPrivate.txt
 cmake-build-nodemcuv2
+config-tool/pb
