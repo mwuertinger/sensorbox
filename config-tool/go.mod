@@ -1,4 +1,4 @@
-module github.com/mwuertinger/sensorbox/config
+module github.com/mwuertinger/sensorbox/config-tool
 
 go 1.16
 
