@@ -1,4 +1,5 @@
 #include <Adafruit_BME280.h>
+#include "Adafruit_seesaw.h"
 #include <Adafruit_Sensor.h>
 #include <CRC32.h>
 #include <EEPROM.h>
@@ -25,10 +26,12 @@ ConfigPb configPb = ConfigPb_init_zero;
 char hostname[64];
 
 float pressure = 0, humidity = 0, temperature = 0;
-uint16_t co2 = 0;
+uint16_t co2 = 0, soilMoisture = 0;
 
 Adafruit_BME280 bme;
 bool bmeInitialized = false;
+
+Adafruit_seesaw ss;
 
 SoftwareSerial co2Sensor(13, 15);
 
@@ -42,7 +45,7 @@ U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 
 void onMqttMessage(char *topic, byte *payload, unsigned int length);
 
-void fatalError(char *msg) {
+void fatalError(char const *msg) {
     Serial.println(msg);
     while(true) {
         digitalWrite(LED_GREEN, HIGH);
@@ -65,6 +68,8 @@ void setupConfig() {
 
     const size_t EEPROM_SIZE = 1024;
     EEPROM.begin(EEPROM_SIZE);
+
+    uint8_t *p = EEPROM.getDataPtr();
     // data layout:
     // 4 bytes = message length
     // 4 bytes = CRC checksum
@@ -72,12 +77,11 @@ void setupConfig() {
     uint32_t *pMessageLength = (uint32_t*) EEPROM.getDataPtr();
     uint32_t *pMessageChecksum = (uint32_t*) (EEPROM.getDataPtr() + 4);
     uint8_t *data = EEPROM.getDataPtr() + 8; // skip length and checksum field
-
     Serial.printf("setupConfig(): *pMessageLength=%d\n\r", *pMessageLength);
 
     uint32_t checksum = 42;
     if (*pMessageLength < EEPROM_SIZE) {
-        Serial.printf("setupConfig(): calculating checksum\n\r", *pMessageLength);
+        Serial.printf("setupConfig(): calculating checksum\n\r");
         CRC32 crc;
         for (size_t i = 0; i < *pMessageLength; i++) {
             crc.update(data[i]);
@@ -109,6 +113,10 @@ void setupLeds() {
 }
 
 void setupDisplay() {
+    if (!configPb.hasDisplay) {
+	return;
+    }
+
     u8g2.begin();
     u8g2.clearBuffer();
     u8g2.setFontRefHeightExtendedText();
@@ -118,6 +126,10 @@ void setupDisplay() {
 }
 
 void updateDisplay() {
+    if (!configPb.hasDisplay) {
+	return;
+    }
+
     u8g2.clearBuffer();
     if (!display) {
         u8g2.sendBuffer();
@@ -166,7 +178,7 @@ void updateLeds() {
     }
 }
 
-ICACHE_RAM_ATTR void onDisplay() {
+IRAM_ATTR void onDisplay() {
     // debounce by ignoring interrupts for 100ms
     if (millis() - displayLastTrigger < 100) {
         return;
@@ -187,11 +199,13 @@ void setupButton() {
 void setupWiFi() {
     Serial.print("Connecting to WiFi");
 
-    u8g2.setFont(u8g2_font_t0_11_tf);
-    u8g2.clearBuffer();
-    u8g2.drawStr(0, 0, hostname);
-    u8g2.drawStr(0, 12, "Connecting to WiFi...");
-    u8g2.sendBuffer();
+    if (configPb.hasDisplay) {
+        u8g2.setFont(u8g2_font_t0_11_tf);
+        u8g2.clearBuffer();
+        u8g2.drawStr(0, 0, hostname);
+        u8g2.drawStr(0, 12, "Connecting to WiFi...");
+        u8g2.sendBuffer();
+    }
 
     WiFi.setAutoReconnect(true);
     WiFi.hostname(hostname);
@@ -201,10 +215,12 @@ void setupWiFi() {
         Serial.print(".");
     }
     Serial.println(WiFi.localIP());
-    u8g2.clearBuffer();
-    u8g2.drawStr(0, 0, hostname);
-    u8g2.drawStr(0, 12, WiFi.localIP().toString().c_str());
-    u8g2.sendBuffer();
+    if (configPb.hasDisplay) {
+        u8g2.clearBuffer();
+        u8g2.drawStr(0, 0, hostname);
+        u8g2.drawStr(0, 12, WiFi.localIP().toString().c_str());
+        u8g2.sendBuffer();
+    }
 }
 
 void setupNtp() {
@@ -233,11 +249,13 @@ void setupMqtt() {
 
 void onOtaStart() {
     Serial.println("OTA begin");
-    u8g2.clearBuffer();
-    u8g2.setFont(u8g2_font_t0_15_tf);
-    u8g2.drawStr(4, 0, "Updating...");
-    u8g2.drawFrame(4, 20, 120, 20);
-    u8g2.sendBuffer();
+    if (configPb.hasDisplay) {
+        u8g2.clearBuffer();
+        u8g2.setFont(u8g2_font_t0_15_tf);
+        u8g2.drawStr(4, 0, "Updating...");
+        u8g2.drawFrame(4, 20, 120, 20);
+        u8g2.sendBuffer();
+    }
 }
 
 void onOtaEnd() {
@@ -246,16 +264,21 @@ void onOtaEnd() {
 
 void onOtaProgress(int cur, int total) {
     Serial.printf("OTA progress: %d/%d\r\n", cur, total);
-    u8g2.drawBox(4, 20, int(float(cur) / float(total) * 120.0), 20);
-    u8g2.sendBuffer();
+    if (configPb.hasDisplay) {
+        u8g2.drawBox(4, 20, int(float(cur) / float(total) * 120.0), 20);
+        u8g2.sendBuffer();
+    }
 }
 
 void onOtaError(int err) {
     Serial.printf("OTA error: %d\r\n", err);
-    char str[128];
-    snprintf(str, 128, "Error: %d", err);
-    u8g2.drawStr(0, 50, str);
-    u8g2.sendBuffer();
+    
+    if (configPb.hasDisplay) {
+        char str[128];
+        snprintf(str, 128, "Error: %d", err);
+        u8g2.drawStr(0, 50, str);
+        u8g2.sendBuffer();
+    }
 }
 
 void setupOta() {
@@ -267,17 +290,29 @@ void setupOta() {
 }
 
 void setupSensors() {
-    // default i2c address 0x76
-    if (bme.begin(0x76)) {
-        bmeInitialized = true;
-    } else {
-        Serial.println("BME setup failed!");
+    if (configPb.hasSensorBME280) {
+        // default i2c address 0x76
+        if (bme.begin(0x76)) {
+            bmeInitialized = true;
+        } else {
+            Serial.println("BME setup failed!");
+        }
     }
 
-    co2Sensor.begin(9600);
+    if (configPb.hasSensorCo2) {
+        co2Sensor.begin(9600);
+    }
+
+    if (configPb.hasSensorSeesaw) {
+	ss.begin(0x36);
+    }
 }
 
 void calibrateCo2() {
+    if (!configPb.hasSensorCo2) {
+	Serial.printf("No CO2 sensor configured\r\n");
+	return;
+    }
     Serial.printf("Calibrating CO2 sensor\r\n");
     uint8_t cmdCalibrate[] = {0xFF, 0x01, 0x87, 0x00, 0x00, 0x00, 0x00, 0x00, 0x78};
     size_t res = co2Sensor.write(cmdCalibrate, 9);
@@ -333,46 +368,53 @@ void sensorUpdate() {
         temperature = bme.readTemperature() + 273.15; // convert to Kelvin
     }
 
-    uint8_t cmdRead[] = {0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};
-    size_t res = co2Sensor.write(cmdRead, 9);
-    if (res != 9) {
-        Serial.printf("CO2 sensor: writing failed: %d\r\n", res);
-        return;
-    }
-    co2Sensor.flush();
-
-    uint8_t buf[9];
-    int n = 0;
-    // try to read from serial port up to 10000 times
-    // usually data arrives after ~1300 iterations
-    for (int i = 0; i < 10000 && n < 9; i++) {
-        int val = co2Sensor.read();
-        if (val < 0) {
-            continue;
+    if (configPb.hasSensorCo2) {
+        uint8_t cmdRead[] = {0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};
+        size_t res = co2Sensor.write(cmdRead, 9);
+        if (res != 9) {
+            Serial.printf("CO2 sensor: writing failed: %d\r\n", res);
+            return;
         }
-        buf[n] = val;
-        n++;
+        co2Sensor.flush();
+    
+        uint8_t buf[9];
+        int n = 0;
+        // try to read from serial port up to 10000 times
+        // usually data arrives after ~1300 iterations
+        for (int i = 0; i < 10000 && n < 9; i++) {
+            int val = co2Sensor.read();
+            if (val < 0) {
+                continue;
+            }
+            buf[n] = val;
+            n++;
+        }
+    
+        // verify checksum
+        uint8_t checksum = 0;
+        for (uint8_t i = 1; i < 8; i++) {
+            checksum += buf[i];
+        }
+        checksum = 0xFF - checksum;
+        checksum += 1;
+        if (buf[8] != checksum) {
+            Serial.println("CO2 sensor: checksum error!");
+        } else {
+            co2 = 256 * buf[2] + buf[3];
+            if (co2 < 200 || co2 > 10000) {
+                Serial.printf("CO2 sensor: discarding inplausible value: %d\r\n", co2);
+                co2 = 0;
+            }
+        }
     }
 
-    // verify checksum
-    uint8_t checksum = 0;
-    for (uint8_t i = 1; i < 8; i++) {
-        checksum += buf[i];
-    }
-    checksum = 0xFF - checksum;
-    checksum += 1;
-    if (buf[8] != checksum) {
-        Serial.println("CO2 sensor: checksum error!");
-    } else {
-        co2 = 256 * buf[2] + buf[3];
-        if (co2 < 200 || co2 > 10000) {
-            Serial.printf("CO2 sensor: discarding inplausible value: %d\r\n", co2);
-            co2 = 0;
-        }
+    soilMoisture = 0;
+    if (configPb.hasSensorSeesaw) {
+	soilMoisture = ss.touchRead(0);
     }
 
     char payload[128];
-    snprintf(payload, 128, "%d,%ld,%ld,%f,%f,%f,%d", configPb.devId, now, uptime, pressure, humidity, temperature, co2);
+    snprintf(payload, 128, "%d,%lld,%ld,%f,%f,%f,%d,%d", configPb.devId, now, uptime, pressure, humidity, temperature, co2, soilMoisture);
     Serial.printf("Publishing: %s\r\n", payload);
     if (!mqtt.publish("sensorbox/measurements", payload)) {
         Serial.println("Publishing failed!");
