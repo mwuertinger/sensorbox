@@ -8,7 +8,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/mwuertinger/sensorbox/config/pb"
+	"github.com/mwuertinger/sensorbox/config-tool/pb"
 )
 
 func main() {
@@ -42,7 +42,7 @@ func main() {
 		log.Fatalln("Failed to marshal config: ", err)
 	}
 
-	out := make([]byte, len(buf) + 4)
+	out := make([]byte, len(buf)+4)
 	binary.LittleEndian.PutUint32(out, uint32(len(buf)))
 	copy(out[4:], buf)
 
