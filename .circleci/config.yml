@@ -2,7 +2,7 @@ version: 2
 jobs:
   build:
     docker:
-      - image: golang:1.17.5-buster
+      - image: golang:1.17.5-bullseye
     steps:
       - run: apt update && apt install -y python3-pip protobuf-compiler nanopb
       - run: pip3 install platformio==5.1.1
