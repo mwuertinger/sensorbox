@@ -1,3 +1,3 @@
 #!/bin/bash
 set -e
-nanopb_generator.py -Dsrc config.proto
+nanopb_generator.py -Dsrc -I.. ../config.proto
