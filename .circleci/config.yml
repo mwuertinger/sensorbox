@@ -8,6 +8,5 @@ jobs:
       - run: pip3 install platformio==5.1.1
       - run: go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.26.0
       - checkout
-      - run: git submodule init && git submodule update
       - run: pushd firmware && platformio run
       - run: pushd config-tool && ./protoc.sh && pushd generate && go build && popd && pushd dump && go build && popd
