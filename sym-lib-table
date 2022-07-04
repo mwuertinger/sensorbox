@@ -1,0 +1,5 @@
+(sym_lib_table
+  (lib (name kicad-ESP8266)(type Legacy)(uri /home/mw/sensorbox-battery-powered/sensorbox-battery-powered/lib/kicad-ESP8266/ESP8266.lib)(options "")(descr ""))
+  (lib (name ht7333-a)(type Legacy)(uri ${KIPRJMOD}/lib/hggh/kicad-libraries/ht7333-a.lib)(options "")(descr ""))
+  (lib (name sensorbox)(type Legacy)(uri ${KIPRJMOD}/lib/sensorbox.lib)(options "")(descr ""))
+)
