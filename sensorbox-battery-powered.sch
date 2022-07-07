@@ -350,17 +350,6 @@ Wire Wire Line
 Wire Wire Line
 	4500 5700 4500 5550
 Connection ~ 4500 5550
-$Comp
-L Connector_Generic:Conn_01x02 J1
-U 1 1 62BC16F6
-P 2950 5400
-F 0 "J1" H 2868 5075 50  0000 C CNN
-F 1 "Conn_01x02" H 2868 5166 50  0000 C CNN
-F 2 "Connector_JST:JST_PH_S2B-PH-K_1x02_P2.00mm_Horizontal" H 2950 5400 50  0001 C CNN
-F 3 "~" H 2950 5400 50  0001 C CNN
-	1    2950 5400
-	-1   0    0    1   
-$EndComp
 Wire Wire Line
 	3750 5550 3400 5550
 Connection ~ 3750 5550
@@ -643,4 +632,16 @@ ENABLE_BAT_SENS
 Wire Wire Line
 	9650 4300 9500 4300
 Connection ~ 9500 4300
+$Comp
+L Connector_Generic:Conn_01x02 J1
+U 1 1 62BC16F6
+P 2950 5400
+F 0 "J1" H 2868 5075 50  0000 C CNN
+F 1 "Conn_01x02" H 2868 5166 50  0000 C CNN
+F 2 "jst-conectors:JST_PH_S2B-PH-SM4-TB_1x02-1MP_P2.00mm_Horizontal" H 2950 5400 50  0001 C CNN
+F 3 "~" H 2950 5400 50  0001 C CNN
+F 4 "C295747" H 2950 5400 50  0001 C CNN "LCSC"
+	1    2950 5400
+	-1   0    0    1   
+$EndComp
 $EndSCHEMATC
