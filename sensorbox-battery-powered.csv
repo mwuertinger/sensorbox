@@ -1,0 +1,13 @@
+Comment,Designator,Footprint,LCSC
+"100nF","C1,C3,C5","Capacitor_SMD:C_0805_2012Metric","C28233"
+"10uF","C2,C4","Capacitor_SMD:C_0805_2012Metric","C15850"
+"Conn_01x02","J1","jst-conectors:JST_PH_S2B-PH-SM4-TB_1x02-1MP_P2.00mm_Horizontal","C295747"
+"Conn_01x06_Male","J2","Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical",""
+"HT7333-A","L1","Package_TO_SOT_SMD:SOT-89-3","C21583"
+"AO3401A","Q1","Package_TO_SOT_SMD:SOT-23","C8549"
+"10k","R1,R2,R3,R4,R5,R7,R8","Resistor_SMD:R_0805_2012Metric","C17414"
+"33k","R6","Resistor_SMD:R_0805_2012Metric","C17633"
+"Reset","SW1","Button_Switch_THT:SW_PUSH_6mm",""
+"Program","SW2","Button_Switch_THT:SW_PUSH_6mm",""
+"ESP-12F","U1","ESP8266:ESP-12E_SMD",""
+"BME280","U2","sensorbox:BME280",""
