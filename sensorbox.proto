@@ -15,4 +15,25 @@ message ConfigPb   {
   bool hasSensorBME280 = 10;
   bool hasSensorSeesaw = 11;
   bool hasDisplay = 12;
+  bool hasLeds = 13;
+  uint64 deepSleepMicroSeconds = 14;
+}
+
+message Measurement {
+  float pressure = 1;
+  float humidity = 2;
+  float temperature = 3;
+  float co2 = 4;
+  float soilMoisture = 5;
+}
+
+message Request {
+  uint32 devId = 1;
+  string passwd = 2 [(nanopb).max_length = 63];
+  Measurement measurement = 3;
+}
+
+message Response {
+  ConfigPb config = 1;
+  int64 firmwareVersion = 2;
 }

@@ -1,3 +1,4 @@
 #!/bin/bash
-set -e
-nanopb_generator.py -D src -I .. ../config.proto
+set -ex
+pwd
+nanopb_generator.py -D src -I .. ../sensorbox.proto
