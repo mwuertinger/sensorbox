@@ -1,0 +1,7 @@
+(fp_lib_table
+  (lib (name Connectors_JST)(type KiCad)(uri ${KIPRJMOD}/lib/Connectors_JST.pretty)(options "")(descr ""))
+  (lib (name ESP8266)(type KiCad)(uri ${KIPRJMOD}/lib/kicad-ESP8266/ESP8266.pretty)(options "")(descr ""))
+  (lib (name ht7333-a)(type KiCad)(uri ${KIPRJMOD}/lib/hggh/kicad-libraries/ht7333-a.pretty)(options "")(descr ""))
+  (lib (name sensorbox)(type KiCad)(uri ~/dev/github.com/mwuertinger/sensorbox/hardware/pcb/sensorbox/sensorbox.pretty)(options "")(descr ""))
+  (lib (name jst-conectors)(type KiCad)(uri ${KIPRJMOD}/lib/jst-conectors)(options "")(descr ""))
+)
