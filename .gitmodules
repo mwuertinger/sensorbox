@@ -1,0 +1,3 @@
+[submodule "hardware/battery-powered/lib/kicad-ESP8266"]
+	path = hardware/battery-powered/lib/kicad-ESP8266
+	url = git@github.com:jdunmire/kicad-ESP8266.git
