@@ -1,3 +1,9 @@
 [submodule "hardware/battery-powered/lib/kicad-ESP8266"]
 	path = hardware/battery-powered/lib/kicad-ESP8266
 	url = git@github.com:jdunmire/kicad-ESP8266.git
+[submodule "hardware/battery-powered/lib/hggh-kicad-libraries"]
+	path = hardware/battery-powered/lib/hggh-kicad-libraries
+	url = git@github.com:hggh/kicad-libraries.git
+[submodule "hardware/battery-powered/lib/kicad-footprints"]
+	path = hardware/battery-powered/lib/kicad-footprints
+	url = https://gitlab.com/kicad/libraries/kicad-footprints.git

@@ -14,7 +14,7 @@ Comment3 ""
 Comment4 ""
 $EndDescr
 $Comp
-L kicad-ESP8266:ESP-12F U1
+L sensorbox-battery-powered-rescue:ESP-12F-kicad-ESP8266 U1
 U 1 1 62B7796D
 P 5400 2850
 F 0 "U1" H 5400 3615 50  0000 C CNN
@@ -288,7 +288,7 @@ Wire Wire Line
 Wire Wire Line
 	6300 2950 7100 2950
 $Comp
-L ht7333-a:HT7333-A L1
+L sensorbox-battery-powered-rescue:HT7333-A-ht7333-a L1
 U 1 1 62BB3C55
 P 4350 5100
 F 0 "L1" H 4400 5497 60  0000 C CNN
@@ -638,7 +638,7 @@ U 1 1 62BC16F6
 P 2950 5400
 F 0 "J1" H 2868 5075 50  0000 C CNN
 F 1 "Conn_01x02" H 2868 5166 50  0000 C CNN
-F 2 "jst-conectors:JST_PH_S2B-PH-SM4-TB_1x02-1MP_P2.00mm_Horizontal" H 2950 5400 50  0001 C CNN
+F 2 "Connector_JST:JST_PH_S2B-PH-SM4-TB_1x02-1MP_P2.00mm_Horizontal" H 2950 5400 50  0001 C CNN
 F 3 "~" H 2950 5400 50  0001 C CNN
 F 4 "C295747" H 2950 5400 50  0001 C CNN "LCSC"
 	1    2950 5400
