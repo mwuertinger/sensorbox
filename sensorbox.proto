@@ -15,4 +15,6 @@ message ConfigPb   {
   bool hasSensorBME280 = 10;
   bool hasSensorSeesaw = 11;
   bool hasDisplay = 12;
+  bool hasLeds = 13;
+  uint64 deepSleepMicroSeconds = 14;
 }

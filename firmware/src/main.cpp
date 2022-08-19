@@ -13,7 +13,7 @@
 #include <U8g2lib.h>
 #include <Wire.h>
 
-#include "config.pb.h"
+#include "sensorbox.pb.h"
 
 
 #define LED_GREEN D6
@@ -47,19 +47,29 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length);
 
 void fatalError(char const *msg) {
     Serial.println(msg);
-    while(true) {
-        digitalWrite(LED_GREEN, HIGH);
-        digitalWrite(LED_YELLOW, LOW);
-        digitalWrite(LED_RED, LOW);
-        delay(200);
-        digitalWrite(LED_GREEN, LOW);
-        digitalWrite(LED_YELLOW, HIGH);
-        digitalWrite(LED_RED, LOW);
-        delay(200);
-        digitalWrite(LED_GREEN, LOW);
-        digitalWrite(LED_YELLOW, LOW);
-        digitalWrite(LED_RED, HIGH);
-        delay(200);
+    if (configPb.hasLeds) {
+        while(true) {
+            digitalWrite(LED_GREEN, HIGH);
+            digitalWrite(LED_YELLOW, LOW);
+            digitalWrite(LED_RED, LOW);
+            delay(200);
+            digitalWrite(LED_GREEN, LOW);
+            digitalWrite(LED_YELLOW, HIGH);
+            digitalWrite(LED_RED, LOW);
+            delay(200);
+            digitalWrite(LED_GREEN, LOW);
+            digitalWrite(LED_YELLOW, LOW);
+            digitalWrite(LED_RED, HIGH);
+            delay(200);
+        }
+    } else {
+	for (int i = 0; i < 3; i++) {
+	    digitalWrite(LED_BUILTIN, HIGH);
+	    delay(200);
+	    digitalWrite(LED_BUILTIN, LOW);
+	    delay(200);
+	}
+	delay(500);
     }
 }
 
@@ -69,7 +79,6 @@ void setupConfig() {
     const size_t EEPROM_SIZE = 1024;
     EEPROM.begin(EEPROM_SIZE);
 
-    uint8_t *p = EEPROM.getDataPtr();
     // data layout:
     // 4 bytes = message length
     // 4 bytes = CRC checksum
@@ -104,6 +113,9 @@ void setupConfig() {
 }
 
 void setupLeds() {
+    if (!configPb.hasLeds) {
+	return;
+    }
     pinMode(LED_GREEN, OUTPUT);
     pinMode(LED_YELLOW, OUTPUT);
     pinMode(LED_RED, OUTPUT);
@@ -155,6 +167,9 @@ void updateDisplay() {
 }
 
 void updateLeds() {
+    if (!configPb.hasLeds) {
+        return;
+    }
     if (!display) {
         digitalWrite(LED_GREEN, LOW);
         digitalWrite(LED_YELLOW, LOW);
@@ -207,6 +222,11 @@ void setupWiFi() {
         u8g2.sendBuffer();
     }
 
+//    IPAddress clientIp(192, 168, 178, 60);
+//    IPAddress gateway(192, 168, 178, 1);
+//    IPAddress subnet(255, 255, 255, 0);
+//    IPAddress primaryDns(192, 168, 178, 1);
+//    WiFi.config(clientIp, gateway, subnet, primaryDns, primaryDns);
     WiFi.setAutoReconnect(true);
     WiFi.hostname(hostname);
     WiFi.begin(configPb.wlan_ssid, configPb.wlan_password);
@@ -331,10 +351,17 @@ void setup() {
     setupButton();
     setupDisplay();
     setupWiFi();
-    setupNtp();
+    // setupNtp();
     setupMqtt();
     setupOta();
     setupSensors();
+
+    pinMode(D5, OUTPUT);
+    digitalWrite(D5, LOW);
+    int voltageRaw = analogRead(A0);
+    float voltage = float(voltageRaw) / 1023.0 * 4.2086;
+    digitalWrite(D5, HIGH);
+    Serial.printf("voltageRaw = %d, voltage = %f\r\n", voltageRaw, voltage);
 }
 
 void mqttReconnect() {
@@ -428,6 +455,12 @@ void loop() {
     mqttReconnect();
     mqtt.loop();
     sensorUpdate();
+
+    if (configPb.deepSleepMicroSeconds > 0) {
+	Serial.printf("Sleeping for %lld us...\r\n", configPb.deepSleepMicroSeconds);
+        bme.sleep();
+    	ESP.deepSleep(configPb.deepSleepMicroSeconds);
+    }
 }
 
 void onMqttMessage(char *topic, byte *payload, unsigned int length) {
@@ -438,7 +471,7 @@ void onMqttMessage(char *topic, byte *payload, unsigned int length) {
 
     if (strcmp(topic, hostname) == 0 && strncmp(str, "ota", length) == 0) {
 	WiFiClient client;
-        ESPhttpUpdate.update(client, String("hal"), 10000, String("/sensorbox.bin"));
+        ESPhttpUpdate.update(client, String("hal"), 10000, String("/sensorbox-esp12e.bin"));
     }
     if (strcmp(topic, hostname) == 0 && strncmp(str, "calibrate_co2", length) == 0) {
         calibrateCo2();
