@@ -45,7 +45,7 @@ func main() {
 	mux.HandleFunc("/sensorbox", h.httpHandler)
 
 	s := &http.Server{
-		Addr:         ":8080",
+		Addr:         config.Http.Listen,
 		Handler:      mux,
 		ReadTimeout:  config.Http.ReadWriteTimeout,
 		WriteTimeout: config.Http.ReadWriteTimeout,
