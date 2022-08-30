@@ -127,6 +127,13 @@ func TestRequest(t *testing.T) {
 			},
 			expectedError: true,
 		},
+		{
+			request: pb.Request{
+				DevId:     100,
+				AuthToken: "",
+			},
+			expectedError: true,
+		},
 	}
 
 	var influxMock InfluxMock
