@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"errors"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -17,9 +17,6 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-var config *Config
-var influxClient influxdb.Client
-
 func main() {
 	sigc := make(chan os.Signal, 1)
 	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
@@ -28,12 +25,12 @@ func main() {
 		log.Fatalf("Usage: %s <config>", os.Args[0])
 	}
 	var err error
-	config, err = parseConfig(os.Args[1])
+	config, err := parseConfig(os.Args[1])
 	if err != nil {
 		log.Fatalf("loading config failed: %v", err)
 	}
 
-	influxClient, err = influxdb.NewHTTPClient(influxdb.HTTPConfig{
+	influxClient, err := influxdb.NewHTTPClient(influxdb.HTTPConfig{
 		Addr: config.Influx.Server,
 	})
 	if err != nil {
@@ -41,24 +38,27 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/sensorbox", httpHandler)
+	var h = app{
+		config:       config,
+		influxClient: influxClient,
+	}
+	mux.HandleFunc("/sensorbox", h.httpHandler)
 
 	s := &http.Server{
-		Addr:           ":8080",
-		Handler:        mux,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   10 * time.Second,
-		MaxHeaderBytes: 1 << 20,
+		Addr:         ":8080",
+		Handler:      mux,
+		ReadTimeout:  config.Http.ReadWriteTimeout,
+		WriteTimeout: config.Http.ReadWriteTimeout,
 	}
 	go func() {
-		if err := s.ListenAndServeTLS(config.CertFile, config.KeyFile); err != http.ErrServerClosed {
+		if err := s.ListenAndServeTLS(config.Http.CertFile, config.Http.KeyFile); err != http.ErrServerClosed {
 			log.Fatalf("http: %v", err)
 		}
 	}()
 
 	sig := <-sigc
 	log.Printf("received %v -> shutting down...", sig)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), config.Http.ShutdownTimeout)
 	defer cancel()
 	if err := s.Shutdown(ctx); err != nil {
 		log.Printf("http: %v", err)
@@ -68,9 +68,14 @@ func main() {
 	}
 }
 
-func httpHandler(w http.ResponseWriter, r *http.Request) {
+type app struct {
+	config       *Config
+	influxClient influxdb.Client
+}
+
+func (h *app) httpHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
-	buf, err := ioutil.ReadAll(r.Body)
+	buf, err := io.ReadAll(r.Body)
 	if err != nil {
 		log.Printf("read body: %v", err)
 		w.WriteHeader(500)
@@ -83,7 +88,9 @@ func httpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := handleRequest(&request)
+	log.Printf("request from dev %d (%s)", request.DevId, r.RemoteAddr)
+
+	response, err := h.handleRequest(&request)
 	if err == unauthorizedErr {
 		w.WriteHeader(401)
 		return
@@ -111,18 +118,18 @@ func httpHandler(w http.ResponseWriter, r *http.Request) {
 
 var unauthorizedErr = errors.New("unauthorized")
 
-func handleRequest(request *pb.Request) (*pb.Response, error) {
-	dev, ok := config.Devices[int(request.DevId)]
+func (h *app) handleRequest(request *pb.Request) (*pb.Response, error) {
+	dev, ok := h.config.Devices[int(request.DevId)]
 	if !ok {
 		log.Printf("unknown device: %d", request.DevId)
 		return nil, unauthorizedErr
 	}
-	if dev.Passwd != request.Passwd {
-		log.Printf("wrong passwd for device: %d", request.DevId)
+	if dev.AuthToken != request.AuthToken {
+		log.Printf("wrong auth token for device: %d", request.DevId)
 		return nil, unauthorizedErr
 	}
 
-	err := writeToInflux(dev.Location, request.Measurement)
+	err := h.writeToInflux(dev.Location, request.Measurement)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +138,7 @@ func handleRequest(request *pb.Request) (*pb.Response, error) {
 }
 
 // writeToInflux writes measurements to InfluxDB
-func writeToInflux(location string, m *pb.Measurement) error {
+func (h *app) writeToInflux(location string, m *pb.Measurement) error {
 	// Create a new point batch
 	bp, err := influxdb.NewBatchPoints(influxdb.BatchPointsConfig{
 		Database:  "sensors",
@@ -167,7 +174,7 @@ func writeToInflux(location string, m *pb.Measurement) error {
 	bp.AddPoint(pt)
 
 	// Write the batch
-	if err := influxClient.Write(bp); err != nil {
+	if err := h.influxClient.Write(bp); err != nil {
 		return err
 	}
 	return nil
@@ -175,10 +182,17 @@ func writeToInflux(location string, m *pb.Measurement) error {
 
 // Config represents a config file
 type Config struct {
-	Influx   InfluxConfig   `yaml:"influx"`
-	Devices  map[int]Device `yaml:"devices"`
-	CertFile string
-	KeyFile  string
+	Http    HttpConfig     `yaml:"http"`
+	Influx  InfluxConfig   `yaml:"influx"`
+	Devices map[int]Device `yaml:"devices"`
+}
+
+type HttpConfig struct {
+	Listen           string        `yaml:"listen"`
+	ReadWriteTimeout time.Duration `yaml:"readWriteTimeout"`
+	ShutdownTimeout  time.Duration `yaml:"shutdownTimeout"`
+	CertFile         string        `yaml:"cert"`
+	KeyFile          string        `yaml:"key"`
 }
 
 type InfluxConfig struct {
@@ -187,13 +201,13 @@ type InfluxConfig struct {
 }
 
 type Device struct {
-	Location string `yaml:"location"`
-	Passwd   string `yaml:"passwd"`
+	Location  string `yaml:"location"`
+	AuthToken string `yaml:"authToken"`
 }
 
 // parseConfig reads config file at path and returns the content or an error
 func parseConfig(path string) (*Config, error) {
-	buf, err := ioutil.ReadFile(path)
+	buf, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

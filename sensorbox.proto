@@ -29,7 +29,7 @@ message Measurement {
 
 message Request {
   uint32 devId = 1;
-  string passwd = 2 [(nanopb).max_length = 63];
+  string authToken = 2 [(nanopb).max_length = 63];
   Measurement measurement = 3;
 }
 
