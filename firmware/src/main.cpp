@@ -242,18 +242,6 @@ void setupWiFi() {
   }
 }
 
-void setupNtp() {
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-  Serial.print("Waiting for NTP time sync: ");
-  time_t now = time(nullptr);
-  while (now < 24 * 3600) {
-    delay(500);
-    Serial.print(".");
-    now = time(nullptr);
-  }
-  Serial.println(now);
-}
-
 void setupMqtt() {
   BearSSL::PublicKey *pubKey = new BearSSL::PublicKey();
   if (!pubKey->parse((configPb.mqtt_pubkey))) {
@@ -350,7 +338,6 @@ void setup() {
   setupButton();
   setupDisplay();
   setupWiFi();
-  // setupNtp();
   setupMqtt();
   setupOta();
   setupSensors();
