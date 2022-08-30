@@ -1,9 +1,17 @@
 config.h
 .pio
 .idea
+.vscode
 CMakeLists.txt
 CMakeListsPrivate.txt
 cmake-build-nodemcuv2
 *.pb.c
 *.pb.h
 *.pb.go
+
+config-tool/dump/dump
+config-tool/generate/generate
+config-tool/modify/modify
+*.bin
+
+server/server
