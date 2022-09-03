@@ -129,9 +129,13 @@ func (h *app) handleRequest(request *pb.Request) (*pb.Response, error) {
 		return nil, unauthorizedErr
 	}
 
-	err := h.writeToInflux(dev.Location, request.Measurement)
-	if err != nil {
-		return nil, err
+	if request.Measurement != nil {
+		err := h.writeToInflux(dev.Location, request.Measurement)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		log.Printf("device %d did not send measurements", request.DevId)
 	}
 
 	return &pb.Response{}, nil
@@ -163,6 +167,9 @@ func (h *app) writeToInflux(location string, m *pb.Measurement) error {
 	}
 	if m.SoilMoisture > 0 {
 		fields["soil_moisture"] = m.SoilMoisture
+	}
+	if m.BatteryVoltage > 0 {
+		fields["battery_voltage"] = m.BatteryVoltage
 	}
 
 	log.Printf("writing to influx: %+v", fields)

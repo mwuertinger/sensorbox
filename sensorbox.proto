@@ -4,27 +4,37 @@ option go_package = "github.com/mwuertinger/sensorbox/config/pb";
 
 message ConfigPb   {
   uint32 devId = 1;
+
   string wlan_ssid = 2 [(nanopb).max_length = 63];
   string wlan_password = 3 [(nanopb).max_length = 63];
+
   string mqtt_addr = 4 [(nanopb).max_length = 63];
   uint32 mqtt_port = 5;
   string mqtt_user = 6 [(nanopb).max_length = 63];
   string mqtt_passwd = 7 [(nanopb).max_length = 63];
   string mqtt_pubkey = 8 [(nanopb).max_length = 1023];
+
   bool hasSensorCo2 = 9;
   bool hasSensorBME280 = 10;
   bool hasSensorSeesaw = 11;
   bool hasDisplay = 12;
   bool hasLeds = 13;
+  bool hasSensorBatteryVoltage = 17;
+
   uint64 deepSleepMicroSeconds = 14;
+
+  string serverUri = 18 [(nanopb).max_length = 63];
+  string authToken = 15 [(nanopb).max_length = 63];
+  bytes serverFingerprintSha1 = 16 [(nanopb).fixed_length = true, (nanopb).max_size = 20];
 }
 
 message Measurement {
   float pressure = 1;
   float humidity = 2;
   float temperature = 3;
-  float co2 = 4;
+  uint32 co2 = 4;
   float soilMoisture = 5;
+  float batteryVoltage = 6;
 }
 
 message Request {

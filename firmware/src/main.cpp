@@ -7,7 +7,6 @@
 #include <ESP8266httpUpdate.h>
 #include <pb_encode.h>
 #include <pb_decode.h>
-#include <PubSubClient.h>
 #include <SoftwareSerial.h>
 #include <string.h>
 #include <U8g2lib.h>
@@ -24,7 +23,7 @@ ConfigPb configPb = ConfigPb_init_zero;
 
 char hostname[64];
 
-float pressure = 0, humidity = 0, temperature = 0;
+float pressure = 0, humidity = 0, temperature = 0, batteryVoltage = 0;
 uint16_t co2 = 0, soilMoisture = 0;
 
 Adafruit_BME280 bme;
@@ -34,15 +33,12 @@ Adafruit_seesaw ss;
 
 SoftwareSerial co2Sensor(13, 15);
 
-PubSubClient mqtt;
 time_t lastUpdate = 0;
 
 bool display = true;
 unsigned long displayLastTrigger = 0;
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
-
-void onMqttMessage(char *topic, byte *payload, unsigned int length);
 
 void fatalError(char const *msg) {
   Serial.println(msg);
@@ -74,7 +70,6 @@ void fatalError(char const *msg) {
 
 void setupConfig() {
   Serial.println("setupConfig()");
-
   const size_t EEPROM_SIZE = 1024;
   EEPROM.begin(EEPROM_SIZE);
 
@@ -83,7 +78,7 @@ void setupConfig() {
   // 4 bytes = CRC checksum
   // protocol buffers message
   uint32_t *pMessageLength = (uint32_t *) EEPROM.getDataPtr();
-  uint32_t *pMessageChecksum = (uint32_t * )(EEPROM.getDataPtr() + 4);
+  uint32_t *pMessageChecksum = (uint32_t *) (EEPROM.getDataPtr() + 4);
   uint8_t *data = EEPROM.getDataPtr() + 8; // skip length and checksum field
   Serial.printf("setupConfig(): *pMessageLength=%d\n\r", *pMessageLength);
 
@@ -206,8 +201,10 @@ IRAM_ATTR void onDisplay() {
 }
 
 void setupButton() {
-  pinMode(BTN_DISPLAY, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(BTN_DISPLAY), onDisplay, RISING);
+  if (configPb.hasDisplay) {
+    pinMode(BTN_DISPLAY, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(BTN_DISPLAY), onDisplay, RISING);
+  }
 }
 
 void setupWiFi() {
@@ -221,11 +218,6 @@ void setupWiFi() {
     u8g2.sendBuffer();
   }
 
-//    IPAddress clientIp(192, 168, 178, 60);
-//    IPAddress gateway(192, 168, 178, 1);
-//    IPAddress subnet(255, 255, 255, 0);
-//    IPAddress primaryDns(192, 168, 178, 1);
-//    WiFi.config(clientIp, gateway, subnet, primaryDns, primaryDns);
   WiFi.setAutoReconnect(true);
   WiFi.hostname(hostname);
   WiFi.begin(configPb.wlan_ssid, configPb.wlan_password);
@@ -240,18 +232,6 @@ void setupWiFi() {
     u8g2.drawStr(0, 12, WiFi.localIP().toString().c_str());
     u8g2.sendBuffer();
   }
-}
-
-void setupMqtt() {
-  BearSSL::PublicKey *pubKey = new BearSSL::PublicKey();
-  if (!pubKey->parse((configPb.mqtt_pubkey))) {
-    fatalError("Parsing pub key failed!");
-  }
-  WiFiClientSecure *client = new WiFiClientSecure();
-  client->setKnownKey(pubKey);
-  mqtt.setClient(*client);
-  mqtt.setServer(configPb.mqtt_addr, configPb.mqtt_port);
-  mqtt.setCallback(onMqttMessage);
 }
 
 void onOtaStart() {
@@ -338,30 +318,89 @@ void setup() {
   setupButton();
   setupDisplay();
   setupWiFi();
-  setupMqtt();
   setupOta();
   setupSensors();
-
-  pinMode(D5, OUTPUT);
-  digitalWrite(D5, LOW);
-  int voltageRaw = analogRead(A0);
-  float voltage = float(voltageRaw) / 1023.0 * 4.2086;
-  digitalWrite(D5, HIGH);
-  Serial.printf("voltageRaw = %d, voltage = %f\r\n", voltageRaw, voltage);
 }
 
-void mqttReconnect() {
-  while (!mqtt.connected()) {
-    Serial.print("Connecting to MQTT server...");
-    char mqttClient[64];
-    snprintf(mqttClient, 64, "sensorbox%02d", configPb.devId);
-    if (mqtt.connect(mqttClient, configPb.mqtt_user, configPb.mqtt_passwd)) {
-      mqtt.subscribe("sensorbox");
-      mqtt.subscribe(hostname);
-      Serial.println(" done");
-    } else {
-      Serial.printf("failed (state=%d), try again in 5 seconds\n", mqtt.state());
-      delay(5000);
+size_t buildRequest(uint8_t *buf, size_t length) {
+  Request request = Request_init_zero;
+  request.devId = configPb.devId;
+  strncpy(request.authToken, configPb.authToken, sizeof(request.authToken));
+  request.has_measurement = true;
+  request.measurement.pressure = pressure;
+  request.measurement.humidity = humidity;
+  request.measurement.temperature = temperature;
+  request.measurement.co2 = co2;
+  request.measurement.soilMoisture = soilMoisture;
+  request.measurement.batteryVoltage = batteryVoltage;
+
+  pb_ostream_t stream = pb_ostream_from_buffer(buf, length);
+  if (!pb_encode(&stream, Request_fields, &request)) {
+    Serial.printf("pb_encode failed: %s\r\n", stream.errmsg);
+  }
+  Serial.printf("pb_encode: length=%d\r\n", stream.bytes_written);
+  return stream.bytes_written;
+}
+
+void sendRequest(uint8_t *data, size_t length) {
+  BearSSL::WiFiClientSecure client;
+  client.setFingerprint(configPb.serverFingerprintSha1);
+  // client.setSSLVersion(BR_TLS12, BR_TLS12);
+  client.setInsecure();
+
+  HTTPClient http;
+  if (!http.begin(client,  "https://192.168.178.2:4000/sensorbox")) {
+    Serial.println("http.begin failed");
+    return;
+  }
+  int httpCode = http.POST(data, length);
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.printf("http.POST: %d\r\n", httpCode);
+  } else {
+    auto response = http.getString();
+    Serial.printf("response size: %d\r\n", response.length());
+  }
+
+  http.end();
+  client.stop();
+}
+
+void updateCo2() {
+  uint8_t cmdRead[] = {0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};
+  size_t res = co2Sensor.write(cmdRead, 9);
+  if (res != 9) {
+    Serial.printf("CO2 sensor: writing failed: %d\r\n", res);
+    return;
+  }
+  co2Sensor.flush();
+
+  uint8_t buf[9];
+  int n = 0;
+  // try to read from serial port up to 10000 times
+  // usually data arrives after ~1300 iterations
+  for (int i = 0; i < 10000 && n < 9; i++) {
+    int val = co2Sensor.read();
+    if (val < 0) {
+      continue;
+    }
+    buf[n] = val;
+    n++;
+  }
+
+  // verify checksum
+  uint8_t checksum = 0;
+  for (uint8_t i = 1; i < 8; i++) {
+    checksum += buf[i];
+  }
+  checksum = 0xFF - checksum;
+  checksum += 1;
+  if (buf[8] != checksum) {
+    Serial.println("CO2 sensor: checksum error!");
+  } else {
+    co2 = 256 * buf[2] + buf[3];
+    if (co2 < 200 || co2 > 10000) {
+      Serial.printf("CO2 sensor: discarding implausible value: %d\r\n", co2);
+      co2 = 0;
     }
   }
 }
@@ -373,52 +412,15 @@ void sensorUpdate() {
   }
   lastUpdate = now;
 
-  unsigned long uptime = millis() / 1000; // system uptime in seconds
-
   if (bmeInitialized) {
     pressure = bme.readPressure() / 100.0;
     humidity = bme.readHumidity();
     temperature = bme.readTemperature() + 273.15; // convert to Kelvin
   }
 
+  co2 = 0;
   if (configPb.hasSensorCo2) {
-    uint8_t cmdRead[] = {0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};
-    size_t res = co2Sensor.write(cmdRead, 9);
-    if (res != 9) {
-      Serial.printf("CO2 sensor: writing failed: %d\r\n", res);
-      return;
-    }
-    co2Sensor.flush();
-
-    uint8_t buf[9];
-    int n = 0;
-    // try to read from serial port up to 10000 times
-    // usually data arrives after ~1300 iterations
-    for (int i = 0; i < 10000 && n < 9; i++) {
-      int val = co2Sensor.read();
-      if (val < 0) {
-        continue;
-      }
-      buf[n] = val;
-      n++;
-    }
-
-    // verify checksum
-    uint8_t checksum = 0;
-    for (uint8_t i = 1; i < 8; i++) {
-      checksum += buf[i];
-    }
-    checksum = 0xFF - checksum;
-    checksum += 1;
-    if (buf[8] != checksum) {
-      Serial.println("CO2 sensor: checksum error!");
-    } else {
-      co2 = 256 * buf[2] + buf[3];
-      if (co2 < 200 || co2 > 10000) {
-        Serial.printf("CO2 sensor: discarding inplausible value: %d\r\n", co2);
-        co2 = 0;
-      }
-    }
+    updateCo2();
   }
 
   soilMoisture = 0;
@@ -426,62 +428,29 @@ void sensorUpdate() {
     soilMoisture = ss.touchRead(0);
   }
 
-  char payload[128];
-  snprintf(payload,
-           128,
-           "%d,%lld,%ld,%f,%f,%f,%d,%d",
-           configPb.devId,
-           now,
-           uptime,
-           pressure,
-           humidity,
-           temperature,
-           co2,
-           soilMoisture);
-  Serial.printf("Publishing: %s\r\n", payload);
-  if (!mqtt.publish("sensorbox/measurements", payload)) {
-    Serial.println("Publishing failed!");
+  if (configPb.hasSensorBatteryVoltage) {
+    pinMode(D5, OUTPUT);
+    digitalWrite(D5, LOW);
+    int voltageRaw = analogRead(A0);
+    batteryVoltage = float(voltageRaw) / 1023.0 * 4.2086;
+    digitalWrite(D5, HIGH);
   }
+
+  auto buf = new uint8_t[128];
+  auto length = buildRequest(buf, 128);
+  sendRequest(buf, length);
+  delete[] buf;
 
   updateDisplay();
   updateLeds();
 }
 
 void loop() {
-  mqttReconnect();
-  mqtt.loop();
   sensorUpdate();
 
   if (configPb.deepSleepMicroSeconds > 0) {
     Serial.printf("Sleeping for %lld us...\r\n", configPb.deepSleepMicroSeconds);
-    bme.sleep();
+    bme.setSampling(Adafruit_BME280::MODE_SLEEP);
     ESP.deepSleep(configPb.deepSleepMicroSeconds);
   }
-}
-
-void onMqttMessage(char *topic, byte *payload, unsigned int length) {
-  char *str = (char *) malloc(length + 1);
-  memcpy(str, payload, length);
-  str[length] = 0;
-  Serial.printf("MQTT message (%s): %s\r\n", topic, str);
-
-  if (strcmp(topic, hostname) == 0 && strncmp(str, "ota", length) == 0) {
-    WiFiClient client;
-    ESPhttpUpdate.update(client, String("hal"), 10000, String("/sensorbox-esp12e.bin"));
-  }
-  if (strcmp(topic, hostname) == 0 && strncmp(str, "calibrate_co2", length) == 0) {
-    calibrateCo2();
-  }
-  if (strcmp(topic, hostname) == 0 && strncmp(str, "display_on", length) == 0) {
-    display = true;
-    updateDisplay();
-    updateLeds();
-  }
-  if (strcmp(topic, hostname) == 0 && strncmp(str, "display_off", length) == 0) {
-    display = false;
-    updateDisplay();
-    updateLeds();
-  }
-
-  free(str);
 }
