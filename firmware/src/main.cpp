@@ -29,13 +29,15 @@ uint16_t co2 = 0, soilMoisture = 0;
 Adafruit_BME280 bme;
 bool bmeInitialized = false;
 
+// 0: off, 1: display+leds, 2: leds only
+uint8_t display = 1;
+
 Adafruit_seesaw ss;
 
 SoftwareSerial co2Sensor(13, 15);
 
 time_t lastUpdate = 0;
 
-bool display = true;
 unsigned long displayLastTrigger = 0;
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
@@ -110,6 +112,7 @@ void setupLeds() {
   if (!configPb.hasLeds) {
     return;
   }
+  Serial.println("setupLeds");
   pinMode(LED_GREEN, OUTPUT);
   pinMode(LED_YELLOW, OUTPUT);
   pinMode(LED_RED, OUTPUT);
@@ -137,7 +140,7 @@ void updateDisplay() {
   }
 
   u8g2.clearBuffer();
-  if (!display) {
+  if (display != 1) {
     u8g2.sendBuffer();
     return;
   }
@@ -164,7 +167,8 @@ void updateLeds() {
   if (!configPb.hasLeds) {
     return;
   }
-  if (!display) {
+  Serial.println("updateLeds");
+  if (display == 0) {
     digitalWrite(LED_GREEN, LOW);
     digitalWrite(LED_YELLOW, LOW);
     digitalWrite(LED_RED, LOW);
@@ -192,7 +196,7 @@ IRAM_ATTR void onDisplay() {
   if (millis() - displayLastTrigger < 100) {
     return;
   }
-  display = !display;
+  display = (display + 1) % 3;
   displayLastTrigger = millis();
   Serial.printf("display = %d\n\r", display);
 
@@ -312,8 +316,8 @@ void calibrateCo2() {
 
 void setup() {
   Serial.begin(9600);
-  setupLeds();
   setupConfig();
+  setupLeds();
   snprintf(hostname, 64, "sensorbox%02d", configPb.devId);
   setupButton();
   setupDisplay();
