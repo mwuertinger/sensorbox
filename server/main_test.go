@@ -158,7 +158,7 @@ func TestRequest(t *testing.T) {
 
 			assert.Equal(t, float64(d.request.Measurement.Temperature)-273.15, fields["temperature"])
 			assert.Equal(t, float64(d.request.Measurement.Pressure), fields["pressure"])
-			assert.Equal(t, float64(d.request.Measurement.Co2), fields["co2"])
+			assert.Equal(t, int64(d.request.Measurement.Co2), fields["co2"])
 			assert.Equal(t, float64(d.request.Measurement.SoilMoisture), fields["soil_moisture"])
 			assert.Equal(t, float64(d.request.Measurement.Humidity), fields["humidity"])
 		}
