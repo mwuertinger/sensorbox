@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -72,32 +74,60 @@ func TestParseConfig(t *testing.T) {
 }
 
 type InfluxMock struct {
-	writes []influxdb.BatchPoints
+	mu        sync.Mutex
+	writes    []influxdb.BatchPoints
+	writeChan chan any
 }
 
 func (m *InfluxMock) Reset() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.writeChan != nil {
+		close(m.writeChan)
+	}
+	m.writeChan = make(chan any)
 	m.writes = nil
 }
 
 func (m *InfluxMock) Ping(timeout time.Duration) (time.Duration, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return 1 * time.Second, "", nil
 }
 
 func (m *InfluxMock) Write(bp influxdb.BatchPoints) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.writes = append(m.writes, bp)
+	m.writeChan <- true
 	return nil
 }
 
 func (m *InfluxMock) Query(q influxdb.Query) (*influxdb.Response, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return &influxdb.Response{}, nil
 }
 
 func (m *InfluxMock) QueryAsChunk(q influxdb.Query) (*influxdb.ChunkedResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return &influxdb.ChunkedResponse{}, nil
 }
 
 func (m *InfluxMock) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return nil
+}
+
+func (m *InfluxMock) WaitForWrite(timeout time.Duration) {
+	select {
+	case <-time.NewTimer(timeout).C:
+		return
+	case <-m.writeChan:
+		return
+	}
 }
 
 func TestRequest(t *testing.T) {
@@ -136,31 +166,36 @@ func TestRequest(t *testing.T) {
 		},
 	}
 
-	var influxMock InfluxMock
+	influxMock := InfluxMock{}
 	app := app{
 		config:       &validConfig,
 		influxClient: &influxMock,
 	}
 
-	for _, d := range data {
-		influxMock.Reset()
-		_, err := app.handleRequest(&d.request)
-		if d.expectedError {
-			assert.Error(t, err, "error expected")
-		} else {
-			assert.NoErrorf(t, err, "success expected")
-			assert.Len(t, influxMock.writes, 1, "1 write expected")
-			write := influxMock.writes[0]
-			points := write.Points()
-			assert.Len(t, points, 1, "1 write expected")
-			fields, err := points[0].Fields()
-			assert.NoError(t, err)
+	for i, d := range data {
+		t.Run(fmt.Sprintf("Test %d", i), func(t *testing.T) {
+			influxMock.Reset()
+			_, err := app.handleRequest(&d.request)
+			if d.expectedError {
+				assert.Error(t, err, "error expected")
+			} else {
+				assert.NoErrorf(t, err, "success expected")
 
-			assert.Equal(t, float64(d.request.Measurement.Temperature)-273.15, fields["temperature"])
-			assert.Equal(t, float64(d.request.Measurement.Pressure), fields["pressure"])
-			assert.Equal(t, int64(d.request.Measurement.Co2), fields["co2"])
-			assert.Equal(t, float64(d.request.Measurement.SoilMoisture), fields["soil_moisture"])
-			assert.Equal(t, float64(d.request.Measurement.Humidity), fields["humidity"])
-		}
+				influxMock.WaitForWrite(time.Second)
+
+				assert.Len(t, influxMock.writes, 1, "1 write expected")
+				write := influxMock.writes[0]
+				points := write.Points()
+				assert.Len(t, points, 1, "1 write expected")
+				fields, err := points[0].Fields()
+				assert.NoError(t, err)
+
+				assert.Equal(t, float64(d.request.Measurement.Temperature)-273.15, fields["temperature"])
+				assert.Equal(t, float64(d.request.Measurement.Pressure), fields["pressure"])
+				assert.Equal(t, int64(d.request.Measurement.Co2), fields["co2"])
+				assert.Equal(t, float64(d.request.Measurement.SoilMoisture), fields["soil_moisture"])
+				assert.Equal(t, float64(d.request.Measurement.Humidity), fields["humidity"])
+			}
+		})
 	}
 }
