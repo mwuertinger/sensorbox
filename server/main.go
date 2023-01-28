@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -97,6 +98,7 @@ type app struct {
 	config           *Config
 	influxClient     influxdb.Client
 	httpClient       http.Client
+	mu               sync.Mutex // protects everything below
 	lastBatteryAlert map[int]time.Time
 }
 
@@ -180,6 +182,7 @@ func (h *app) batteryAlert(devId int, dev Device, measurement *pb.Measurement) e
 	if measurement.BatteryVoltage == 0 || measurement.BatteryVoltage > 3.24 {
 		return nil
 	}
+	h.mu.Lock()
 	log.Printf("batteryAlert(%d): voltage=%f, lastAlert=%s", devId, measurement.BatteryVoltage,
 		h.lastBatteryAlert[devId].Format("2006-01-02 15:04:05"))
 
@@ -189,6 +192,7 @@ func (h *app) batteryAlert(devId int, dev Device, measurement *pb.Measurement) e
 		return nil
 	}
 	h.lastBatteryAlert[devId] = time.Now()
+	h.mu.Unlock()
 
 	msg := fmt.Sprintf("battery low for %s device", dev.Location)
 
