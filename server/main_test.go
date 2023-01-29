@@ -167,7 +167,7 @@ func TestRequest(t *testing.T) {
 	}
 
 	influxMock := InfluxMock{}
-	app := app{
+	app := application{
 		config:       &validConfig,
 		influxClient: &influxMock,
 	}

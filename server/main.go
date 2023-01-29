@@ -45,20 +45,20 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	var h = app{
+	var app = application{
 		config:       config,
 		influxClient: influxClient,
 		httpClient: http.Client{
 			Timeout: config.Ntfy.Timeout,
 		},
 	}
-	mux.HandleFunc("/sensorbox", h.httpHandler)
+	mux.HandleFunc("/sensorbox", app.httpHandler)
 
 	pe, err := prometheus.NewExporter(prometheus.Options{
 		Namespace: "sensorbox_server",
 	})
 	if err != nil {
-		log.Fatalf("Failed to create Prometheus exporter: %v", err)
+		log.Fatalf("failed to create Prometheus exporter: %v", err)
 	}
 	mux.Handle("/metrics", pe)
 
@@ -67,17 +67,17 @@ func main() {
 	}
 	if err := view.Register(ochttp.ServerRequestCountView, ochttp.ServerRequestBytesView,
 		ochttp.ServerResponseBytesView, ochttp.ServerLatencyView); err != nil {
-		log.Fatalf("Failed to register server views for HTTP metrics: %v", err)
+		log.Fatalf("failed to register server views for HTTP metrics: %v", err)
 	}
 
-	s := &http.Server{
+	server := &http.Server{
 		Addr:         config.Http.Listen,
 		Handler:      och,
 		ReadTimeout:  config.Http.ReadWriteTimeout,
 		WriteTimeout: config.Http.ReadWriteTimeout,
 	}
 	go func() {
-		if err := s.ListenAndServeTLS(config.Http.CertFile, config.Http.KeyFile); err != http.ErrServerClosed {
+		if err := server.ListenAndServeTLS(config.Http.CertFile, config.Http.KeyFile); err != http.ErrServerClosed {
 			log.Fatalf("http: %v", err)
 		}
 	}()
@@ -86,25 +86,26 @@ func main() {
 	log.Printf("received %v -> shutting down...", sig)
 	ctx, cancel := context.WithTimeout(context.Background(), config.Http.ShutdownTimeout)
 	defer cancel()
-	if err := s.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(ctx); err != nil {
 		log.Printf("http: %v", err)
 	}
-	h.wg.Wait() // wait for all goroutines to finish
+	app.wg.Wait() // wait for all goroutines to finish
 	if err := influxClient.Close(); err != nil {
 		log.Printf("influx: %v", err)
 	}
+	app.httpClient.CloseIdleConnections()
 }
 
-type app struct {
+type application struct {
 	config           *Config
 	influxClient     influxdb.Client
 	httpClient       http.Client
-	wg               sync.WaitGroup
-	mu               sync.Mutex // protects everything below
+	wg               sync.WaitGroup // used to wait for pending goroutines
+	mu               sync.Mutex     // protects everything below
 	lastBatteryAlert map[int]time.Time
 }
 
-func (h *app) httpHandler(w http.ResponseWriter, r *http.Request) {
+func (app *application) httpHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	buf, err := io.ReadAll(r.Body)
@@ -122,7 +123,7 @@ func (h *app) httpHandler(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("request from dev %d (%s)", request.DevId, r.RemoteAddr)
 
-	response, err := h.handleRequest(&request)
+	response, err := app.handleRequest(&request)
 	if err == unauthorizedErr {
 		w.WriteHeader(401)
 		return
@@ -150,9 +151,9 @@ func (h *app) httpHandler(w http.ResponseWriter, r *http.Request) {
 
 var unauthorizedErr = errors.New("unauthorized")
 
-func (h *app) handleRequest(request *pb.Request) (*pb.Response, error) {
+func (app *application) handleRequest(request *pb.Request) (*pb.Response, error) {
 	devId := int(request.DevId)
-	dev, ok := h.config.Devices[devId]
+	dev, ok := app.config.Devices[devId]
 	if !ok {
 		log.Printf("unknown device: %d", request.DevId)
 		return nil, unauthorizedErr
@@ -163,20 +164,7 @@ func (h *app) handleRequest(request *pb.Request) (*pb.Response, error) {
 	}
 
 	if request.Measurement != nil {
-		go func() {
-			h.wg.Add(1)
-			defer h.wg.Done()
-			if err := h.writeToInflux(dev.Location, request.Measurement); err != nil {
-				log.Printf("write to influx: %v", err)
-			}
-		}()
-		go func() {
-			h.wg.Add(1)
-			defer h.wg.Done()
-			if err := h.batteryAlert(devId, dev, request.Measurement); err != nil {
-				log.Printf("battery alert: %v", err)
-			}
-		}()
+		app.processMeasurements(request, dev, devId)
 	} else {
 		log.Printf("device %d did not send measurements", request.DevId)
 	}
@@ -184,25 +172,42 @@ func (h *app) handleRequest(request *pb.Request) (*pb.Response, error) {
 	return &pb.Response{}, nil
 }
 
-func (h *app) batteryAlert(devId int, dev Device, measurement *pb.Measurement) error {
+func (app *application) processMeasurements(request *pb.Request, dev Device, devId int) {
+	go func() {
+		app.wg.Add(1)
+		defer app.wg.Done()
+		if err := app.writeToInflux(dev.Location, request.Measurement); err != nil {
+			log.Printf("write to influx: %v", err)
+		}
+	}()
+	go func() {
+		app.wg.Add(1)
+		defer app.wg.Done()
+		if err := app.batteryAlert(devId, dev, request.Measurement); err != nil {
+			log.Printf("battery alert: %v", err)
+		}
+	}()
+}
+
+func (app *application) batteryAlert(devId int, dev Device, measurement *pb.Measurement) error {
 	if measurement.BatteryVoltage == 0 || measurement.BatteryVoltage > 3.24 {
 		return nil
 	}
-	h.mu.Lock()
+	app.mu.Lock()
 	log.Printf("batteryAlert(%d): voltage=%f, lastAlert=%s", devId, measurement.BatteryVoltage,
-		h.lastBatteryAlert[devId].Format("2006-01-02 15:04:05"))
+		app.lastBatteryAlert[devId].Format("2006-01-02 15:04:05"))
 
 	// send at most one alert every 24h for every device
-	if h.lastBatteryAlert[devId].After(time.Now().Add(-24 * time.Hour)) {
+	if app.lastBatteryAlert[devId].After(time.Now().Add(-24 * time.Hour)) {
 		log.Printf("batteryAlert(%d): last alert too recent", devId)
 		return nil
 	}
-	h.lastBatteryAlert[devId] = time.Now()
-	h.mu.Unlock()
+	app.lastBatteryAlert[devId] = time.Now()
+	app.mu.Unlock()
 
 	msg := fmt.Sprintf("battery low for %s device", dev.Location)
 
-	res, err := h.httpClient.Post(h.config.Ntfy.Url, "text/plain", strings.NewReader(msg))
+	res, err := app.httpClient.Post(app.config.Ntfy.Url, "text/plain", strings.NewReader(msg))
 	if err != nil {
 		return err
 	}
@@ -218,7 +223,7 @@ func (h *app) batteryAlert(devId int, dev Device, measurement *pb.Measurement) e
 }
 
 // writeToInflux writes measurements to InfluxDB
-func (h *app) writeToInflux(location string, m *pb.Measurement) error {
+func (app *application) writeToInflux(location string, m *pb.Measurement) error {
 	// Create a new point batch
 	bp, err := influxdb.NewBatchPoints(influxdb.BatchPointsConfig{
 		Database:  "sensors",
@@ -257,7 +262,7 @@ func (h *app) writeToInflux(location string, m *pb.Measurement) error {
 	bp.AddPoint(pt)
 
 	// Write the batch
-	if err := h.influxClient.Write(bp); err != nil {
+	if err := app.influxClient.Write(bp); err != nil {
 		return err
 	}
 	return nil
