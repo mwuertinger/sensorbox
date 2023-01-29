@@ -89,6 +89,7 @@ func main() {
 	if err := s.Shutdown(ctx); err != nil {
 		log.Printf("http: %v", err)
 	}
+	h.wg.Wait() // wait for all goroutines to finish
 	if err := influxClient.Close(); err != nil {
 		log.Printf("influx: %v", err)
 	}
@@ -98,6 +99,7 @@ type app struct {
 	config           *Config
 	influxClient     influxdb.Client
 	httpClient       http.Client
+	wg               sync.WaitGroup
 	mu               sync.Mutex // protects everything below
 	lastBatteryAlert map[int]time.Time
 }
@@ -162,11 +164,15 @@ func (h *app) handleRequest(request *pb.Request) (*pb.Response, error) {
 
 	if request.Measurement != nil {
 		go func() {
+			h.wg.Add(1)
+			defer h.wg.Done()
 			if err := h.writeToInflux(dev.Location, request.Measurement); err != nil {
 				log.Printf("write to influx: %v", err)
 			}
 		}()
 		go func() {
+			h.wg.Add(1)
+			defer h.wg.Done()
 			if err := h.batteryAlert(devId, dev, request.Measurement); err != nil {
 				log.Printf("battery alert: %v", err)
 			}
