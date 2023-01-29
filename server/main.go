@@ -190,7 +190,7 @@ func (app *application) processMeasurements(request *pb.Request, dev Device, dev
 }
 
 func (app *application) batteryAlert(devId int, dev Device, measurement *pb.Measurement) error {
-	if measurement.BatteryVoltage == 0 || measurement.BatteryVoltage > 3.24 {
+	if measurement.BatteryVoltage == 0 || measurement.BatteryVoltage > app.config.Battery.ThresholdVoltage {
 		return nil
 	}
 	app.mu.Lock()
@@ -274,6 +274,7 @@ type Config struct {
 	Influx  InfluxConfig   `yaml:"influx"`
 	Devices map[int]Device `yaml:"devices"`
 	Ntfy    NtfyConfig     `yaml:"ntfy"`
+	Battery BatteryConfig  `yaml:"battery"`
 }
 
 type HttpConfig struct {
@@ -298,6 +299,10 @@ type Device struct {
 type NtfyConfig struct {
 	Url     string        `yaml:"url"`
 	Timeout time.Duration `yaml:"timeout"`
+}
+
+type BatteryConfig struct {
+	ThresholdVoltage float32 `yaml:"thresholdVoltage"`
 }
 
 // parseConfig reads config file at path and returns the content or an error
