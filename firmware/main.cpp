@@ -12,7 +12,7 @@
 #include <U8g2lib.h>
 #include <Wire.h>
 
-#include "sensorbox.pb.h"
+#include "src/sensorbox.pb.h"
 
 #define LED_GREEN D6
 #define LED_YELLOW D5
