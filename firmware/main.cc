@@ -1,5 +1,5 @@
 #include <Adafruit_BME280.h>
-#include "Adafruit_seesaw.h"
+//#include "Adafruit_seesaw.h"
 #include <Adafruit_Sensor.h>
 #include <CRC32.h>
 #include <EEPROM.h>
@@ -32,7 +32,7 @@ bool bmeInitialized = false;
 // 0: off, 1: display+leds, 2: leds only
 uint8_t display = 1;
 
-Adafruit_seesaw ss;
+// Adafruit_seesaw ss;
 
 SoftwareSerial co2Sensor(13, 15);
 
@@ -294,9 +294,9 @@ void setupSensors() {
     co2Sensor.begin(9600);
   }
 
-  if (configPb.hasSensorSeesaw) {
-    ss.begin(0x36);
-  }
+//  if (configPb.hasSensorSeesaw) {
+//    ss.begin(0x36);
+//  }
 }
 
 void calibrateCo2() {
@@ -428,9 +428,9 @@ void sensorUpdate() {
   }
 
   soilMoisture = 0;
-  if (configPb.hasSensorSeesaw) {
-    soilMoisture = ss.touchRead(0);
-  }
+//  if (configPb.hasSensorSeesaw) {
+//    soilMoisture = ss.touchRead(0);
+//  }
 
   if (configPb.hasSensorBatteryVoltage) {
     pinMode(D5, OUTPUT);

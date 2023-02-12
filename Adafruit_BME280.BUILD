@@ -4,8 +4,8 @@ load(
 )
 
 platformio_library(
-    name = "adafruit_seesaw",
-    src = "Adafruit_seesaw.cpp",
-    hdr = "Adafruit_seesaw.h",
+    name = "Adafruit_BME280",
+    src = "Adafruit_BME280.cpp",
+    hdr = "Adafruit_BME280.h",
     visibility = ["//visibility:public"],
 )

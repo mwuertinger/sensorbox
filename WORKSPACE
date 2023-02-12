@@ -25,12 +25,12 @@ git_repository(
     tag = "v0.0.10",
 )
 
-#new_git_repository(
-#    name = "adafruit_bme280",
-#    remote = "https://github.com/adafruit/Adafruit_BME280_Library.git",
-#    tag = "2.2.2",
-#    build_file = "@//:adafruit_bme280.BUILD",
-#)
+new_git_repository(
+    name = "Adafruit_BME280",
+    remote = "https://github.com/adafruit/Adafruit_BME280_Library.git",
+    tag = "2.2.2",
+    build_file = "@//:Adafruit_BME280.BUILD",
+)
 
 new_git_repository(
     name = "u8g2",
@@ -45,10 +45,10 @@ new_git_repository(
 #    tag = "nanopb-0.4.7",
 #    build_file = "@//:nanopb.BUILD",
 #)
-#
-#new_git_repository(
-#    name = "adafruit_seesaw",
-#    remote = "https://github.com/adafruit/Adafruit_Seesaw.git",
-#    tag = "1.6.3",
-#    build_file = "@//:adafruit_seesaw.BUILD",
-#)
+
+new_git_repository(
+    name = "adafruit_seesaw",
+    remote = "https://github.com/adafruit/Adafruit_Seesaw.git",
+    tag = "1.6.3",
+    build_file = "@//:adafruit_seesaw.BUILD",
+)
