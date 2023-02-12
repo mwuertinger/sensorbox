@@ -6,4 +6,5 @@ cc_library(
     hdrs = [
         "Adafruit_seesaw.h",
     ],
+    visibility = ["//visibility:public"],
 )

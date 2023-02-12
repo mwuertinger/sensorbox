@@ -6,4 +6,5 @@ cc_library(
     hdrs = [
         "Adafruit_BME280.h",
     ],
+    visibility = ["//visibility:public"],
 )
