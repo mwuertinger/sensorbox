@@ -29,26 +29,26 @@ new_git_repository(
     name = "adafruit_bme280",
     remote = "https://github.com/adafruit/Adafruit_BME280_Library.git",
     tag = "2.2.2",
-    build_file = "adafruit_bme280.BUILD",
+    build_file = "@//third_party:adafruit_bme280.BUILD",
 )
 
 new_git_repository(
     name = "u8g2",
     commit = "3500b1056b33999b285387d196c78fe4ab707f79",
     remote = "https://github.com/olikraus/u8g2.git",
-    build_file = "u8g2.BUILD",
+    build_file = "@//third_party:u8g2.BUILD",
 )
 
 new_git_repository(
     name = "nanopb",
     remote = "https://github.com/nanopb/nanopb.git",
     tag = "nanopb-0.4.7",
-    build_file = "nanopb.BUILD",
+    build_file = "@//third_party:nanopb.BUILD",
 )
 
 new_git_repository(
     name = "adafruit_seesaw",
     remote = "https://github.com/adafruit/Adafruit_Seesaw.git",
     tag = "1.6.3",
-    build_file = "adafruit_seesaw.BUILD",
+    build_file = "@//third_party:adafruit_seesaw.BUILD",
 )
