@@ -6,14 +6,14 @@ load(
 
 platformio_project(
     name = "sensorbox",
-    src = "main.cpp",
+    src = "main.cc",
     board = "esp12e",
     framework = "arduino",
     platform = "espressif8266",
     deps = [
-        "@adafruit_bme280",
-        "@adafruit_seesaw",
-        "@nanopb",
+#        "@adafruit_bme280",
+#        "@adafruit_seesaw",
+#        "@nanopb",
         "@u8g2",
     ],
 )
