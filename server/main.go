@@ -102,7 +102,8 @@ type application struct {
 	httpClient       http.Client
 	wg               sync.WaitGroup // used to wait for pending goroutines
 	mu               sync.Mutex     // protects everything below
-	lastBatteryAlert map[int]time.Time
+	lastNotification map[string]time.Time
+	temperatures     map[string]float32 // most recent temperature measurements per location
 }
 
 func (app *application) httpHandler(w http.ResponseWriter, r *http.Request) {
@@ -193,20 +194,40 @@ func (app *application) batteryAlert(devId int, dev Device, measurement *pb.Meas
 	if measurement.BatteryVoltage == 0 || measurement.BatteryVoltage > app.config.Battery.ThresholdVoltage {
 		return nil
 	}
+
+	notificationType := fmt.Sprintf("battery-%d", devId)
+
 	app.mu.Lock()
 	log.Printf("batteryAlert(%d): voltage=%f, lastAlert=%s", devId, measurement.BatteryVoltage,
-		app.lastBatteryAlert[devId].Format("2006-01-02 15:04:05"))
+		app.lastNotification[notificationType].Format("2006-01-02 15:04:05"))
 
 	// send at most one alert every 24h for every device
-	if app.lastBatteryAlert[devId].After(time.Now().Add(-24 * time.Hour)) {
+	if app.lastNotification[notificationType].After(time.Now().Add(-24 * time.Hour)) {
 		log.Printf("batteryAlert(%d): last alert too recent", devId)
 		return nil
 	}
-	app.lastBatteryAlert[devId] = time.Now()
+	app.lastNotification[notificationType] = time.Now()
 	app.mu.Unlock()
 
-	msg := fmt.Sprintf("battery low for %s device", dev.Location)
+	return app.sendNotification(fmt.Sprintf("battery low for %s device", dev.Location))
+}
 
+func (app *application) temperatureAlert(dev Device, measurement *pb.Measurement) error {
+	app.temperatures[dev.Location] = measurement.Temperature
+
+	for _, locationPair := range [][2]string{{"Terrace", "Living Room"}} {
+		notificationType := fmt.Sprintf("temperature-%s-%s", locationPair[0], locationPair[1])
+		if app.lastNotification[notificationType].Before(time.Now().Add(-1 * time.Hour)) {
+			continue
+		}
+
+		if app.temperatures["Terrace"] > app.temperatures["Living Room"] {
+
+		}
+	}
+}
+
+func (app *application) sendNotification(msg string) error {
 	res, err := app.httpClient.Post(app.config.Ntfy.Url, "text/plain", strings.NewReader(msg))
 	if err != nil {
 		return err
@@ -219,7 +240,7 @@ func (app *application) batteryAlert(devId int, dev Device, measurement *pb.Meas
 	if res.StatusCode != 200 {
 		return fmt.Errorf("status: %d, body: %s", res.StatusCode, string(body))
 	}
-	return nil
+
 }
 
 // writeToInflux writes measurements to InfluxDB
