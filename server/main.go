@@ -20,7 +20,6 @@ import (
 	"go.opencensus.io/plugin/ochttp"
 	"go.opencensus.io/stats/view"
 	"google.golang.org/protobuf/proto"
-	"gopkg.in/yaml.v2"
 )
 
 func main() {
@@ -48,10 +47,12 @@ func main() {
 	var app = application{
 		config:       config,
 		influxClient: influxClient,
-		httpClient: http.Client{
-			Timeout: config.Ntfy.Timeout,
+		ntfyClient: &ntfyClient{
+			httpClient: http.Client{Timeout: config.Ntfy.Timeout},
+			url:        config.Ntfy.Url,
 		},
 	}
+	defer app.ntfyClient.Shutdown()
 	mux.HandleFunc("/sensorbox", app.httpHandler)
 
 	pe, err := prometheus.NewExporter(prometheus.Options{
@@ -93,13 +94,12 @@ func main() {
 	if err := influxClient.Close(); err != nil {
 		log.Printf("influx: %v", err)
 	}
-	app.httpClient.CloseIdleConnections()
 }
 
 type application struct {
 	config           *Config
 	influxClient     influxdb.Client
-	httpClient       http.Client
+	ntfyClient       NtfyClient
 	wg               sync.WaitGroup // used to wait for pending goroutines
 	mu               sync.Mutex     // protects everything below
 	lastNotification map[string]time.Time
@@ -187,6 +187,7 @@ func (app *application) processMeasurements(request *pb.Request, dev Device, dev
 		if err := app.batteryAlert(devId, dev, request.Measurement); err != nil {
 			log.Printf("battery alert: %v", err)
 		}
+		app.temperatureAlert(dev, request.Measurement)
 	}()
 }
 
@@ -209,26 +210,55 @@ func (app *application) batteryAlert(devId int, dev Device, measurement *pb.Meas
 	app.lastNotification[notificationType] = time.Now()
 	app.mu.Unlock()
 
-	return app.sendNotification(fmt.Sprintf("battery low for %s device", dev.Location))
+	return app.ntfyClient.SendNotification(fmt.Sprintf("battery low for %s device", dev.Location))
 }
 
-func (app *application) temperatureAlert(dev Device, measurement *pb.Measurement) error {
+func (app *application) temperatureAlert(dev Device, measurement *pb.Measurement) {
+	app.mu.Lock()
 	app.temperatures[dev.Location] = measurement.Temperature
 
-	for _, locationPair := range [][2]string{{"Terrace", "Living Room"}} {
-		notificationType := fmt.Sprintf("temperature-%s-%s", locationPair[0], locationPair[1])
-		if app.lastNotification[notificationType].Before(time.Now().Add(-1 * time.Hour)) {
+	var notifications []string
+	for _, locations := range app.config.TemperatureAlertLocations {
+		notificationType := fmt.Sprintf("temperature-%s-%s", locations[0], locations[1])
+		if app.lastNotification[notificationType].After(time.Now().Add(-1 * time.Hour)) {
+			log.Printf("temperatureAlert: Skipping because last notification was too recent: %v", app.lastNotification[notificationType])
 			continue
 		}
 
-		if app.temperatures["Terrace"] > app.temperatures["Living Room"] {
+		temp0, ok0 := app.temperatures[locations[0]]
+		temp1, ok1 := app.temperatures[locations[1]]
+		if !ok0 || !ok1 {
+			continue
+		}
+		if temp0 > temp1 {
+			app.lastNotification[notificationType] = time.Now()
+			notifications = append(notifications, fmt.Sprintf("%s warmer than %s", locations[0], locations[1]))
+		} else if temp1 > temp0 {
+			app.lastNotification[notificationType] = time.Now()
+			notifications = append(notifications, fmt.Sprintf("%s warmer than %s", locations[1], locations[0]))
+		}
+	}
+	app.mu.Unlock()
 
+	for _, notification := range notifications {
+		if err := app.ntfyClient.SendNotification(notification); err != nil {
+			log.Printf("temperatureAlert: %v", err)
 		}
 	}
 }
 
-func (app *application) sendNotification(msg string) error {
-	res, err := app.httpClient.Post(app.config.Ntfy.Url, "text/plain", strings.NewReader(msg))
+type NtfyClient interface {
+	SendNotification(msg string) error
+	Shutdown()
+}
+
+type ntfyClient struct {
+	httpClient http.Client
+	url        string
+}
+
+func (n *ntfyClient) SendNotification(msg string) error {
+	res, err := n.httpClient.Post(n.url, "text/plain", strings.NewReader(msg))
 	if err != nil {
 		return err
 	}
@@ -240,7 +270,12 @@ func (app *application) sendNotification(msg string) error {
 	if res.StatusCode != 200 {
 		return fmt.Errorf("status: %d, body: %s", res.StatusCode, string(body))
 	}
+	return nil
 
+}
+
+func (n *ntfyClient) Shutdown() {
+	n.httpClient.CloseIdleConnections()
 }
 
 // writeToInflux writes measurements to InfluxDB
@@ -287,55 +322,4 @@ func (app *application) writeToInflux(location string, m *pb.Measurement) error 
 		return err
 	}
 	return nil
-}
-
-// Config represents a config file
-type Config struct {
-	Http    HttpConfig     `yaml:"http"`
-	Influx  InfluxConfig   `yaml:"influx"`
-	Devices map[int]Device `yaml:"devices"`
-	Ntfy    NtfyConfig     `yaml:"ntfy"`
-	Battery BatteryConfig  `yaml:"battery"`
-}
-
-type HttpConfig struct {
-	Listen           string        `yaml:"listen"`
-	ReadWriteTimeout time.Duration `yaml:"readWriteTimeout"`
-	ShutdownTimeout  time.Duration `yaml:"shutdownTimeout"`
-	CertFile         string        `yaml:"cert"`
-	KeyFile          string        `yaml:"key"`
-}
-
-type InfluxConfig struct {
-	Server  string        `yaml:"server"`
-	Token   string        `yaml:"token"`
-	Timeout time.Duration `yaml:"timeout"`
-}
-
-type Device struct {
-	Location  string `yaml:"location"`
-	AuthToken string `yaml:"authToken"`
-}
-
-type NtfyConfig struct {
-	Url     string        `yaml:"url"`
-	Timeout time.Duration `yaml:"timeout"`
-}
-
-type BatteryConfig struct {
-	ThresholdVoltage float32 `yaml:"thresholdVoltage"`
-}
-
-// parseConfig reads config file at path and returns the content or an error
-func parseConfig(path string) (*Config, error) {
-	buf, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	var config Config
-	err = yaml.Unmarshal(buf, &config)
-	if err != nil {
-		return nil, err
-	}
-	return &config, nil
 }

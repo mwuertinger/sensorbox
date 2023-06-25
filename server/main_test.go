@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -12,66 +11,6 @@ import (
 	influxdb "github.com/influxdata/influxdb1-client/v2"
 	"github.com/stretchr/testify/assert"
 )
-
-var validConfigStr = `---
-http:
-  listen: ":4000"
-  readWriteTimeout: 10s
-  shutdownTimeout: 20s
-  cert: sensorbox-server.crt
-  key: sensorbox-server.key
-influx:
-  server: http://localhost:8086
-devices:
-  1:
-    location: "Foo"
-    authToken: "ooF"
-  2:
-    location: "Bar"
-    authToken: "raB"
-`
-
-var validConfig = Config{
-	Http: HttpConfig{
-		Listen:           ":4000",
-		ReadWriteTimeout: 10 * time.Second,
-		ShutdownTimeout:  20 * time.Second,
-		CertFile:         "sensorbox-server.crt",
-		KeyFile:          "sensorbox-server.key",
-	},
-	Influx: InfluxConfig{
-		Server: "http://localhost:8086",
-	},
-	Devices: map[int]Device{
-		1: {
-			Location:  "Foo",
-			AuthToken: "ooF",
-		},
-		2: {
-			Location:  "Bar",
-			AuthToken: "raB",
-		},
-	},
-}
-
-func TestParseConfig(t *testing.T) {
-	f, err := os.CreateTemp(os.TempDir(), "TestParseConfig")
-	if err != nil {
-		t.Fatalf("create temp file: %v", err)
-	}
-	if _, err := f.WriteString(validConfigStr); err != nil {
-		t.Fatalf("write temp file: %v", err)
-	}
-	path := f.Name()
-	f.Close()
-
-	config, err := parseConfig(path)
-	if err != nil {
-		t.Fatalf("parseConfig: %v", err)
-	}
-
-	assert.Equal(t, validConfig, *config)
-}
 
 type InfluxMock struct {
 	mu        sync.Mutex
@@ -168,8 +107,10 @@ func TestRequest(t *testing.T) {
 
 	influxMock := InfluxMock{}
 	app := application{
-		config:       &validConfig,
-		influxClient: &influxMock,
+		config:           &validConfig,
+		influxClient:     &influxMock,
+		lastNotification: make(map[string]time.Time),
+		temperatures:     make(map[string]float32),
 	}
 
 	for i, d := range data {
@@ -198,4 +139,36 @@ func TestRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+type ntfyMock struct {
+	msgs []string
+}
+
+func (n *ntfyMock) SendNotification(msg string) error {
+	n.msgs = append(n.msgs, msg)
+	return nil
+}
+
+func (n *ntfyMock) Shutdown() {
+}
+
+func TestTemperatureAlert(t *testing.T) {
+	ntfyMock := ntfyMock{}
+	app := application{
+		config:           &validConfig,
+		influxClient:     &InfluxMock{},
+		ntfyClient:       &ntfyMock,
+		temperatures:     make(map[string]float32),
+		lastNotification: make(map[string]time.Time),
+	}
+
+	app.temperatureAlert(Device{Location: "Foo"}, &pb.Measurement{Temperature: 17})
+	assert.Emptyf(t, ntfyMock.msgs, "no notifications expected")
+	app.temperatureAlert(Device{Location: "Bar"}, &pb.Measurement{Temperature: 18})
+	assert.Len(t, ntfyMock.msgs, 1)
+	app.temperatureAlert(Device{Location: "Bar"}, &pb.Measurement{Temperature: 19})
+	assert.Len(t, ntfyMock.msgs, 1)
+	app.temperatureAlert(Device{Location: "Bar"}, &pb.Measurement{Temperature: 16})
+	assert.Len(t, ntfyMock.msgs, 1)
 }

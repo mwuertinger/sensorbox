@@ -1,0 +1,11 @@
+Mar 09 02:11:33 hal sensorbox-server[482]: 2023/03/09 02:11:33 batteryAlert(14): voltage=3.237701, lastAlert=0001-01-01 00:00:00
+Mar 09 02:11:33 hal sensorbox-server[482]: 2023/03/09 02:11:33 batteryAlert(14): voltage=3.237701, lastAlert=0001-01-01 00:00:00
+Mar 09 02:11:33 hal sensorbox-server[482]: panic: assignment to entry in nil map
+Mar 09 02:11:33 hal sensorbox-server[482]: goroutine 499619 [running]:
+Mar 09 02:11:33 hal sensorbox-server[482]: main.(*application).batteryAlert(0x118f9c0, 0xe, {{0x11ca1e8, 0x7}, {0x118c150, 0x14}}, 0x1052600)
+Mar 09 02:11:33 hal sensorbox-server[482]:         /home/mw/dev/github.com/mwuertinger/sensorbox/server/main.go:205 +0x25c
+Mar 09 02:11:33 hal sensorbox-server[482]: main.(*application).processMeasurements.func2()
+Mar 09 02:11:33 hal sensorbox-server[482]:         /home/mw/dev/github.com/mwuertinger/sensorbox/server/main.go:186 +0xe4
+Mar 09 02:11:33 hal sensorbox-server[482]: created by main.(*application).processMeasurements
+Mar 09 02:11:33 hal sensorbox-server[482]:         /home/mw/dev/github.com/mwuertinger/sensorbox/server/main.go:183 +0x16c
+Mar 09 02:11:33 hal systemd[1]: sensorbox-server.service: Main process exited, code=exited, status=2/INVALIDARGUMENT
