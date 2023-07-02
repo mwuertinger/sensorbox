@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/mwuertinger/sensorbox/server/ntfy"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -47,10 +47,7 @@ func main() {
 	var app = application{
 		config:       config,
 		influxClient: influxClient,
-		ntfyClient: &ntfyClient{
-			httpClient: http.Client{Timeout: config.Ntfy.Timeout},
-			url:        config.Ntfy.Url,
-		},
+		ntfyClient:   ntfy.New(config.Ntfy.Url, config.Ntfy.Timeout),
 	}
 	defer app.ntfyClient.Shutdown()
 	mux.HandleFunc("/sensorbox", app.httpHandler)
@@ -96,14 +93,23 @@ func main() {
 	}
 }
 
+type transition uint8
+
+const (
+	transition_none = iota
+	transition_atob
+	transition_btoa
+)
+
 type application struct {
-	config           *Config
-	influxClient     influxdb.Client
-	ntfyClient       NtfyClient
-	wg               sync.WaitGroup // used to wait for pending goroutines
-	mu               sync.Mutex     // protects everything below
-	lastNotification map[string]time.Time
-	temperatures     map[string]float32 // most recent temperature measurements per location
+	config                 *Config
+	influxClient           influxdb.Client
+	ntfyClient             ntfy.NtfyClient
+	clock                  func() time.Time
+	wg                     sync.WaitGroup     // used to wait for pending goroutines
+	mu                     sync.Mutex         // protects everything below
+	temperatures           map[string]float32 // most recent temperature measurements per location
+	temperatureTransitions map[string]transition
 }
 
 func (app *application) httpHandler(w http.ResponseWriter, r *http.Request) {
@@ -203,11 +209,11 @@ func (app *application) batteryAlert(devId int, dev Device, measurement *pb.Meas
 		app.lastNotification[notificationType].Format("2006-01-02 15:04:05"))
 
 	// send at most one alert every 24h for every device
-	if app.lastNotification[notificationType].After(time.Now().Add(-24 * time.Hour)) {
+	if app.lastNotification[notificationType].After(app.clock().Add(-24 * time.Hour)) {
 		log.Printf("batteryAlert(%d): last alert too recent", devId)
 		return nil
 	}
-	app.lastNotification[notificationType] = time.Now()
+	app.lastNotification[notificationType] = app.clock()
 	app.mu.Unlock()
 
 	return app.ntfyClient.SendNotification(fmt.Sprintf("battery low for %s device", dev.Location))
@@ -245,37 +251,6 @@ func (app *application) temperatureAlert(dev Device, measurement *pb.Measurement
 			log.Printf("temperatureAlert: %v", err)
 		}
 	}
-}
-
-type NtfyClient interface {
-	SendNotification(msg string) error
-	Shutdown()
-}
-
-type ntfyClient struct {
-	httpClient http.Client
-	url        string
-}
-
-func (n *ntfyClient) SendNotification(msg string) error {
-	res, err := n.httpClient.Post(n.url, "text/plain", strings.NewReader(msg))
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return fmt.Errorf("read body: %v", err)
-	}
-	if res.StatusCode != 200 {
-		return fmt.Errorf("status: %d, body: %s", res.StatusCode, string(body))
-	}
-	return nil
-
-}
-
-func (n *ntfyClient) Shutdown() {
-	n.httpClient.CloseIdleConnections()
 }
 
 // writeToInflux writes measurements to InfluxDB

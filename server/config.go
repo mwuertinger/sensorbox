@@ -12,7 +12,7 @@ type Config struct {
 	Http                      HttpConfig     `yaml:"http"`
 	Influx                    InfluxConfig   `yaml:"influx"`
 	Devices                   map[int]Device `yaml:"devices"`
-	Ntfy                      NtfyConfig     `yaml:"ntfy"`
+	Ntfy                      NtfyConfig     `yaml:"notification"`
 	Battery                   BatteryConfig  `yaml:"battery"`
 	TemperatureAlertLocations [][2]string    `yaml:"temperatureAlertLocations"`
 }

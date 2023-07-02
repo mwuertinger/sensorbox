@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/mwuertinger/sensorbox/server/ntfy"
 	"sync"
 	"testing"
 	"time"
@@ -141,34 +142,29 @@ func TestRequest(t *testing.T) {
 	}
 }
 
-type ntfyMock struct {
-	msgs []string
-}
-
-func (n *ntfyMock) SendNotification(msg string) error {
-	n.msgs = append(n.msgs, msg)
-	return nil
-}
-
-func (n *ntfyMock) Shutdown() {
-}
-
 func TestTemperatureAlert(t *testing.T) {
-	ntfyMock := ntfyMock{}
+	ntfyMock := ntfy.Mock{}
+	now := time.Now()
 	app := application{
 		config:           &validConfig,
 		influxClient:     &InfluxMock{},
 		ntfyClient:       &ntfyMock,
 		temperatures:     make(map[string]float32),
 		lastNotification: make(map[string]time.Time),
+		clock: func() time.Time {
+			return now
+		},
 	}
 
 	app.temperatureAlert(Device{Location: "Foo"}, &pb.Measurement{Temperature: 17})
-	assert.Emptyf(t, ntfyMock.msgs, "no notifications expected")
+	assert.Emptyf(t, ntfyMock.Messages(), "no notification expected")
 	app.temperatureAlert(Device{Location: "Bar"}, &pb.Measurement{Temperature: 18})
-	assert.Len(t, ntfyMock.msgs, 1)
+	assert.Len(t, ntfyMock.Messages(), 1)
 	app.temperatureAlert(Device{Location: "Bar"}, &pb.Measurement{Temperature: 19})
-	assert.Len(t, ntfyMock.msgs, 1)
+	assert.Len(t, ntfyMock.Messages(), 1)
 	app.temperatureAlert(Device{Location: "Bar"}, &pb.Measurement{Temperature: 16})
-	assert.Len(t, ntfyMock.msgs, 1)
+	assert.Len(t, ntfyMock.Messages(), 1)
+	now = now.Add(2 * time.Hour)
+	app.temperatureAlert(Device{Location: "Bar"}, &pb.Measurement{Temperature: 16})
+	assert.Len(t, ntfyMock.Messages(), 1)
 }
