@@ -1,13 +1,15 @@
 module github.com/mwuertinger/sensorbox/server
 
-go 1.19
+go 1.21
+
+toolchain go1.23.0
 
 require (
 	contrib.go.opencensus.io/exporter/prometheus v0.4.2
 	github.com/influxdata/influxdb1-client v0.0.0-20220302092344-a9ab5670611c
 	github.com/stretchr/testify v1.8.1
 	go.opencensus.io v0.24.0
-	google.golang.org/protobuf v1.28.1
+	google.golang.org/protobuf v1.36.2
 	gopkg.in/yaml.v2 v2.4.0
 )
 
