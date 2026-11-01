@@ -30,15 +30,24 @@ Adafruit_BME280 bme;
 bool bmeInitialized = false;
 
 // 0: off, 1: display+leds, 2: leds only
-uint8_t display = 1;
+volatile uint8_t display = 1;
+// set by the button interrupt handler, processed in loop()
+volatile bool displayChanged = false;
 
 Adafruit_seesaw ss;
 
 SoftwareSerial co2Sensor(13, 15);
 
-time_t lastUpdate = 0;
+// Interval between measurements. Scheduling is based on millis() and unsigned arithmetic, so it keeps working when
+// millis() wraps around after ~49.7 days.
+const uint32_t UPDATE_INTERVAL_MS = 60 * 1000;
+uint32_t lastUpdate = 0;
+bool firstUpdate = true;
 
-unsigned long displayLastTrigger = 0;
+volatile uint32_t displayLastTrigger = 0;
+
+// Fallback if the config does not contain a server URI.
+const char DEFAULT_SERVER_URI[] = "https://192.168.178.2:4000/sensorbox";
 
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
 
@@ -60,13 +69,17 @@ void fatalError(char const *msg) {
       delay(200);
     }
   } else {
-    for (int i = 0; i < 3; i++) {
-      digitalWrite(LED_BUILTIN, HIGH);
-      delay(200);
-      digitalWrite(LED_BUILTIN, LOW);
-      delay(200);
+    // Never return: continuing with an invalid config would leave the device in an undefined state.
+    pinMode(LED_BUILTIN, OUTPUT);
+    while (true) {
+      for (int i = 0; i < 3; i++) {
+        digitalWrite(LED_BUILTIN, HIGH);
+        delay(200);
+        digitalWrite(LED_BUILTIN, LOW);
+        delay(200);
+      }
+      delay(500);
     }
-    delay(500);
   }
 }
 
@@ -85,7 +98,8 @@ void setupConfig() {
   Serial.printf("setupConfig(): *pMessageLength=%d\n\r", *pMessageLength);
 
   uint32_t checksum = 42;
-  if (*pMessageLength < EEPROM_SIZE) {
+  // the message must fit into the EEPROM area after the 8 byte header
+  if (*pMessageLength <= EEPROM_SIZE - 8) {
     Serial.printf("setupConfig(): calculating checksum\n\r");
     CRC32 crc;
     for (size_t i = 0; i < *pMessageLength; i++) {
@@ -191,15 +205,25 @@ void updateLeds() {
   }
 }
 
+// Interrupt handler: must be short and must not use I2C, Serial or anything else that is not interrupt-safe.
+// The display and LEDs are updated from loop() via handleDisplayChange().
 IRAM_ATTR void onDisplay() {
   // debounce by ignoring interrupts for 100ms
-  if (millis() - displayLastTrigger < 100) {
+  uint32_t now = millis();
+  if (now - displayLastTrigger < 100) {
     return;
   }
   display = (display + 1) % 3;
-  displayLastTrigger = millis();
-  Serial.printf("display = %d\n\r", display);
+  displayLastTrigger = now;
+  displayChanged = true;
+}
 
+void handleDisplayChange() {
+  if (!displayChanged) {
+    return;
+  }
+  displayChanged = false;
+  Serial.printf("display = %d\n\r", display);
   updateDisplay();
   updateLeds();
 }
@@ -329,7 +353,7 @@ void setup() {
 size_t buildRequest(uint8_t *buf, size_t length) {
   Request request = Request_init_zero;
   request.devId = configPb.devId;
-  strncpy(request.authToken, configPb.authToken, sizeof(request.authToken));
+  strncpy(request.authToken, configPb.authToken, sizeof(request.authToken) - 1);
   request.has_measurement = true;
   request.measurement.pressure = pressure;
   request.measurement.humidity = humidity;
@@ -340,20 +364,35 @@ size_t buildRequest(uint8_t *buf, size_t length) {
 
   pb_ostream_t stream = pb_ostream_from_buffer(buf, length);
   if (!pb_encode(&stream, Request_fields, &request)) {
-    Serial.printf("pb_encode failed: %s\r\n", stream.errmsg);
+    Serial.printf("pb_encode failed: %s\r\n", PB_GET_ERROR(&stream));
+    return 0;
   }
   Serial.printf("pb_encode: length=%d\r\n", stream.bytes_written);
   return stream.bytes_written;
 }
 
+bool hasServerFingerprint() {
+  for (size_t i = 0; i < sizeof(configPb.serverFingerprintSha1); i++) {
+    if (configPb.serverFingerprintSha1[i] != 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void sendRequest(uint8_t *data, size_t length) {
   BearSSL::WiFiClientSecure client;
-  client.setFingerprint(configPb.serverFingerprintSha1);
-  // client.setSSLVersion(BR_TLS12, BR_TLS12);
-  client.setInsecure();
+  if (hasServerFingerprint()) {
+    // Verify the server certificate. Without this, anyone on the network could intercept the auth token.
+    client.setFingerprint(configPb.serverFingerprintSha1);
+  } else {
+    Serial.println("WARNING: no server fingerprint configured, server certificate is NOT verified");
+    client.setInsecure();
+  }
 
+  const char *uri = configPb.serverUri[0] != '\0' ? configPb.serverUri : DEFAULT_SERVER_URI;
   HTTPClient http;
-  if (!http.begin(client,  "https://192.168.178.2:4000/sensorbox")) {
+  if (!http.begin(client, uri)) {
     Serial.println("http.begin failed");
     return;
   }
@@ -378,7 +417,7 @@ void updateCo2() {
   }
   co2Sensor.flush();
 
-  uint8_t buf[9];
+  uint8_t buf[9] = {0};
   int n = 0;
   // try to read from serial port up to 10000 times
   // usually data arrives after ~1300 iterations
@@ -389,6 +428,11 @@ void updateCo2() {
     }
     buf[n] = val;
     n++;
+  }
+
+  if (n < 9) {
+    Serial.printf("CO2 sensor: incomplete response: %d bytes\r\n", n);
+    return;
   }
 
   // verify checksum
@@ -410,10 +454,12 @@ void updateCo2() {
 }
 
 void sensorUpdate() {
-  time_t now = time(nullptr);
-  if (now - lastUpdate < 60) { // update every 60s
+  uint32_t now = millis();
+  // unsigned subtraction handles the millis() wrap around correctly
+  if (!firstUpdate && now - lastUpdate < UPDATE_INTERVAL_MS) {
     return;
   }
+  firstUpdate = false;
   lastUpdate = now;
 
   if (bmeInitialized) {
@@ -440,16 +486,18 @@ void sensorUpdate() {
     digitalWrite(D5, HIGH);
   }
 
-  auto buf = new uint8_t[128];
-  auto length = buildRequest(buf, 128);
-  sendRequest(buf, length);
-  delete[] buf;
+  static uint8_t buf[Request_size];
+  auto length = buildRequest(buf, sizeof(buf));
+  if (length > 0) {
+    sendRequest(buf, length);
+  }
 
   updateDisplay();
   updateLeds();
 }
 
 void loop() {
+  handleDisplayChange();
   sensorUpdate();
 
   if (configPb.deepSleepMicroSeconds > 0) {
