@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # weekly run to catch newly published vulnerabilities
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+env:
+  NANOPB_VERSION: "0.4.9.1"
+  GRPCIO_TOOLS_VERSION: "1.85.1"
+  PROTOC_GEN_GO_VERSION: "v1.36.12"
+  PLATFORMIO_VERSION: "6.2.0"
+
+jobs:
+  go:
+    name: Go (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [server, config-tool]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install code generators
+        run: |
+          pip install "nanopb==${NANOPB_VERSION}" "grpcio-tools==${GRPCIO_TOOLS_VERSION}"
+          go install "google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}"
+      - name: Generate protobuf code
+        run: ./protoc.sh
+      - name: Check formatting
+        working-directory: ${{ matrix.module }}
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - name: Vet
+        working-directory: ${{ matrix.module }}
+        run: go vet ./...
+      - name: Test
+        working-directory: ${{ matrix.module }}
+        run: go test -race ./...
+      - name: Build
+        working-directory: ${{ matrix.module }}
+        run: go build ./...
+      - name: govulncheck
+        working-directory: ${{ matrix.module }}
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  firmware:
+    name: Firmware
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.platformio
+          key: platformio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini') }}
+      - name: Install tools
+        run: |
+          pip install "platformio==${PLATFORMIO_VERSION}" "nanopb==${NANOPB_VERSION}" "grpcio-tools==${GRPCIO_TOOLS_VERSION}"
+          go install "google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}"
+      - name: Generate protobuf code
+        run: ./protoc.sh
+      - name: Build firmware
+        run: pio run -d firmware
+      - uses: actions/upload-artifact@v7
+        with:
+          name: firmware
+          path: firmware/.pio/build/*/firmware.bin

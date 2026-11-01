@@ -15,3 +15,8 @@ config-tool/modify/modify
 *.bin
 
 server/server
+
+# flash dumps may contain WiFi credentials and auth tokens
+*.full-dump
+cmake-build-*
+/bazel-*
