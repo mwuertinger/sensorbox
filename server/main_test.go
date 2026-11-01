@@ -82,10 +82,7 @@ type InfluxMock struct {
 func (m *InfluxMock) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.writeChan != nil {
-		close(m.writeChan)
-	}
-	m.writeChan = make(chan any)
+	m.writeChan = make(chan any, 10) // buffered so Write never blocks if WaitForWrite timed out
 	m.writes = nil
 }
 
@@ -172,7 +169,8 @@ func TestRequest(t *testing.T) {
 		influxClient: &influxMock,
 	}
 
-	for i, d := range data {
+	for i := range data {
+		d := &data[i]
 		t.Run(fmt.Sprintf("Test %d", i), func(t *testing.T) {
 			influxMock.Reset()
 			_, err := app.handleRequest(&d.request)
@@ -198,4 +196,38 @@ func TestRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestLowBatteryMeasurement is a regression test: low battery measurements used to trigger an alert code path that
+// wrote to a nil map and crashed the whole server. Battery alerts are now handled by temperature-alert.
+func TestLowBatteryMeasurement(t *testing.T) {
+	influxMock := InfluxMock{}
+	influxMock.Reset()
+	app := application{
+		config:       &validConfig,
+		influxClient: &influxMock,
+	}
+	_, err := app.handleRequest(&pb.Request{
+		DevId:       1,
+		AuthToken:   "ooF",
+		Measurement: &pb.Measurement{BatteryVoltage: 0.1},
+	})
+	assert.NoError(t, err)
+	influxMock.WaitForWrite(time.Second)
+	app.wg.Wait()
+	assert.Len(t, influxMock.writes, 1)
+}
+
+// TestParseLegacyConfig ensures that config files still containing the removed ntfy/battery sections can be parsed.
+func TestParseLegacyConfig(t *testing.T) {
+	path := t.TempDir() + "/config.yml"
+	legacy := validConfigStr + "ntfy:\n  url: https://ntfy.example.com/topic\n  timeout: 5s\nbattery:\n  thresholdVoltage: 3.5\n"
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := parseConfig(path)
+	if err != nil {
+		t.Fatalf("parseConfig: %v", err)
+	}
+	assert.Equal(t, validConfig, *config)
 }
