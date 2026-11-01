@@ -1,5 +1,7 @@
 # Config Tool
 
+Run `../protoc.sh` first to generate the protobuf code.
+
 Read the config from a device and print it:
 ```
 esptool.py --port /dev/ttyUSB0 read_flash 0x03fb000 0x400 config.bin

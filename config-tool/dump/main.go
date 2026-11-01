@@ -4,6 +4,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 
@@ -24,5 +25,5 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	os.Stdout.WriteString(prototext.Format(config) + "\n")
+	fmt.Println(prototext.Format(config))
 }

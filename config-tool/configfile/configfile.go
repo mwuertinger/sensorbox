@@ -9,6 +9,7 @@
 package configfile
 
 import (
+	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -23,11 +24,22 @@ const Size = 1024
 
 const headerSize = 8
 
+// maxStringLength is the nanopb max_length of the string fields in sensorbox.proto (except mqtt_pubkey, whose 1023
+// exceeds Size anyway).
+// Longer values pass the checksum but fail to decode on the device.
+const maxStringLength = 63
+
 // Encode serializes config into the on-flash format.
 func Encode(config *pb.ConfigPb) ([]byte, error) {
+	if err := validate(config); err != nil {
+		return nil, err
+	}
 	data, err := proto.Marshal(config)
 	if err != nil {
 		return nil, fmt.Errorf("marshal: %w", err)
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty config is rejected by the firmware")
 	}
 	if len(data) > Size-headerSize {
 		return nil, fmt.Errorf("config too large: %d bytes, at most %d bytes allowed", len(data), Size-headerSize)
@@ -58,4 +70,25 @@ func Decode(in []byte) (*pb.ConfigPb, error) {
 		return nil, fmt.Errorf("unmarshal: %w", err)
 	}
 	return config, nil
+}
+
+// validate checks the nanopb size limits from sensorbox.proto.
+func validate(c *pb.ConfigPb) error {
+	for name, s := range map[string]string{
+		"wlan_ssid":     c.WlanSsid,
+		"wlan_password": c.WlanPassword,
+		"mqtt_addr":     c.MqttAddr,
+		"mqtt_user":     c.MqttUser,
+		"mqtt_passwd":   c.MqttPasswd,
+		"serverUri":     c.ServerUri,
+		"authToken":     c.AuthToken,
+	} {
+		if len(s) > maxStringLength {
+			return fmt.Errorf("%s too long: %d bytes, at most %d bytes allowed", name, len(s), maxStringLength)
+		}
+	}
+	if n := len(c.ServerFingerprintSha1); n != 0 && n != sha1.Size {
+		return fmt.Errorf("serverFingerprintSha1 must be %d bytes, got %d", sha1.Size, n)
+	}
+	return nil
 }

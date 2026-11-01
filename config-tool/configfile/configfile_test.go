@@ -1,6 +1,10 @@
 package configfile
 
 import (
+	"bytes"
+	"crypto/sha1"
+	"slices"
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -31,9 +35,9 @@ func TestDecodeInvalid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	corrupted := append([]byte(nil), valid...)
+	corrupted := slices.Clone(valid)
 	corrupted[8] ^= 0xff
-	hugeLength := append([]byte(nil), valid...)
+	hugeLength := slices.Clone(valid)
 	hugeLength[3] = 0xff
 
 	for name, in := range map[string][]byte{
@@ -41,18 +45,34 @@ func TestDecodeInvalid(t *testing.T) {
 		"short":       {1, 2, 3},
 		"checksum":    corrupted,
 		"huge length": hugeLength,
-		"erased":      bytesOf(0xff, Size),
+		"erased":      bytes.Repeat([]byte{0xff}, Size),
 	} {
-		if _, err := Decode(in); err == nil {
-			t.Errorf("%s: expected error", name)
-		}
+		t.Run(name, func(t *testing.T) {
+			if _, err := Decode(in); err == nil {
+				t.Error("expected error")
+			}
+		})
 	}
 }
 
-func bytesOf(b byte, n int) []byte {
-	out := make([]byte, n)
-	for i := range out {
-		out[i] = b
+func TestEncodeInvalid(t *testing.T) {
+	long := strings.Repeat("x", maxStringLength+1)
+	for name, config := range map[string]*pb.ConfigPb{
+		"long ssid":         {WlanSsid: long},
+		"long password":     {WlanPassword: long},
+		"long server uri":   {ServerUri: long},
+		"long auth token":   {AuthToken: long},
+		"short fingerprint": {ServerFingerprintSha1: []byte{1, 2, 3}},
+		"too large":         {MqttPubkey: strings.Repeat("x", Size)},
+		"empty":             {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Encode(config); err == nil {
+				t.Error("expected error")
+			}
+		})
 	}
-	return out
+	if _, err := Encode(&pb.ConfigPb{AuthToken: long[1:], ServerFingerprintSha1: make([]byte, sha1.Size)}); err != nil {
+		t.Errorf("max length: %v", err)
+	}
 }

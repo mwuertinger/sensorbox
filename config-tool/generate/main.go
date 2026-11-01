@@ -52,8 +52,8 @@ func main() {
 	}
 	if *fingerprint != "" {
 		fp, err := hex.DecodeString(strings.ReplaceAll(*fingerprint, ":", ""))
-		if err != nil || len(fp) != 20 {
-			log.Fatalf("invalid server_fingerprint: must be 20 bytes in hex")
+		if err != nil {
+			log.Fatalf("invalid server_fingerprint: %v", err)
 		}
 		config.ServerFingerprintSha1 = fp
 	}
