@@ -13,13 +13,13 @@ import (
 	"syscall"
 	"time"
 
-	"contrib.go.opencensus.io/exporter/prometheus"
 	influxdb "github.com/influxdata/influxdb1-client/v2"
 	"github.com/mwuertinger/sensorbox/server/pb"
-	"go.opencensus.io/plugin/ochttp"
-	"go.opencensus.io/stats/view"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/proto"
-	"gopkg.in/yaml.v2"
 )
 
 func main() {
@@ -50,25 +50,14 @@ func main() {
 	}
 	mux.HandleFunc("/sensorbox", app.httpHandler)
 
-	pe, err := prometheus.NewExporter(prometheus.Options{
-		Namespace: "sensorbox_server",
-	})
-	if err != nil {
-		log.Fatalf("failed to create Prometheus exporter: %v", err)
-	}
-	mux.Handle("/metrics", pe)
-
-	och := &ochttp.Handler{
-		Handler: mux,
-	}
-	if err := view.Register(ochttp.ServerRequestCountView, ochttp.ServerRequestBytesView,
-		ochttp.ServerResponseBytesView, ochttp.ServerLatencyView); err != nil {
-		log.Fatalf("failed to register server views for HTTP metrics: %v", err)
-	}
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+	handler := instrumentHandler(reg, mux)
 
 	server := &http.Server{
 		Addr:         config.Http.Listen,
-		Handler:      och,
+		Handler:      handler,
 		ReadTimeout:  config.Http.ReadWriteTimeout,
 		WriteTimeout: config.Http.ReadWriteTimeout,
 	}
@@ -83,7 +72,7 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), config.Http.ShutdownTimeout)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
-		// Handlers may still be running and calling wg.Add, so Wait would be unsafe.
+		// Handlers may still be running and starting goroutines, so Wait would be unsafe.
 		log.Printf("http: %v", err)
 	} else {
 		app.wg.Wait() // wait for pending influx writes
@@ -95,6 +84,39 @@ func main() {
 
 // maxRequestSize limits the size of request bodies. Requests sent by sensorboxes are ~100 bytes.
 const maxRequestSize = 4096
+
+// instrumentHandler wraps handler with Prometheus HTTP server metrics.
+func instrumentHandler(reg prometheus.Registerer, handler http.Handler) http.Handler {
+	const namespace = "sensorbox_server"
+	requests := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "http_requests_total",
+		Help:      "Number of HTTP requests by status code and method.",
+	}, []string{"code", "method"})
+	duration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: namespace,
+		Name:      "http_request_duration_seconds",
+		Help:      "HTTP request latency.",
+	}, []string{"code", "method"})
+	requestSize := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: namespace,
+		Name:      "http_request_size_bytes",
+		Help:      "HTTP request size.",
+		Buckets:   prometheus.ExponentialBuckets(64, 4, 6),
+	}, []string{"code", "method"})
+	responseSize := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: namespace,
+		Name:      "http_response_size_bytes",
+		Help:      "HTTP response size.",
+		Buckets:   prometheus.ExponentialBuckets(64, 4, 6),
+	}, []string{"code", "method"})
+	reg.MustRegister(requests, duration, requestSize, responseSize)
+
+	return promhttp.InstrumentHandlerCounter(requests,
+		promhttp.InstrumentHandlerDuration(duration,
+			promhttp.InstrumentHandlerRequestSize(requestSize,
+				promhttp.InstrumentHandlerResponseSize(responseSize, handler))))
+}
 
 type application struct {
 	config       *Config
@@ -173,14 +195,11 @@ func (app *application) handleRequest(request *pb.Request) (*pb.Response, error)
 }
 
 func (app *application) processMeasurements(request *pb.Request, dev Device, devId int) {
-	// Add must happen before the goroutine is started, otherwise Wait() in main() may miss it.
-	app.wg.Add(1)
-	go func() {
-		defer app.wg.Done()
+	app.wg.Go(func() {
 		if err := app.writeToInflux(dev.Location, request.Measurement); err != nil {
 			log.Printf("write to influx (dev %d): %v", devId, err)
 		}
-	}()
+	})
 }
 
 // writeToInflux writes measurements to InfluxDB
