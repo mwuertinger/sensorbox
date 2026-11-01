@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"sync"
 	"testing"
@@ -11,6 +14,7 @@ import (
 
 	influxdb "github.com/influxdata/influxdb1-client/v2"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/proto"
 )
 
 var validConfigStr = `---
@@ -40,7 +44,8 @@ var validConfig = Config{
 		KeyFile:          "sensorbox-server.key",
 	},
 	Influx: InfluxConfig{
-		Server: "http://localhost:8086",
+		Server:  "http://localhost:8086",
+		Timeout: defaultInfluxTimeout,
 	},
 	Devices: map[int]Device{
 		1: {
@@ -172,7 +177,8 @@ func TestRequest(t *testing.T) {
 		influxClient: &influxMock,
 	}
 
-	for i, d := range data {
+	for i := range data {
+		d := &data[i]
 		t.Run(fmt.Sprintf("Test %d", i), func(t *testing.T) {
 			influxMock.Reset()
 			_, err := app.handleRequest(&d.request)
@@ -198,4 +204,77 @@ func TestRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestLowBatteryMeasurement is a regression test: low battery measurements used to trigger an alert code path that
+// wrote to a nil map and crashed the whole server. Battery alerts are now handled by temperature-alert.
+func TestLowBatteryMeasurement(t *testing.T) {
+	influxMock := InfluxMock{}
+	influxMock.Reset()
+	app := application{
+		config:       &validConfig,
+		influxClient: &influxMock,
+	}
+	_, err := app.handleRequest(&pb.Request{
+		DevId:       1,
+		AuthToken:   "ooF",
+		Measurement: &pb.Measurement{BatteryVoltage: 0.1},
+	})
+	assert.NoError(t, err)
+	influxMock.WaitForWrite(time.Second)
+	app.wg.Wait()
+	assert.Len(t, influxMock.writes, 1)
+}
+
+func TestHttpHandler(t *testing.T) {
+	validBody, err := proto.Marshal(&pb.Request{
+		DevId:       1,
+		AuthToken:   "ooF",
+		Measurement: &pb.Measurement{Temperature: 293.15},
+	})
+	assert.NoError(t, err)
+	unauthorizedBody, err := proto.Marshal(&pb.Request{DevId: 1, AuthToken: "wrong"})
+	assert.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		method string
+		body   []byte
+		status int
+	}{
+		{"valid", http.MethodPost, validBody, http.StatusOK},
+		{"unauthorized", http.MethodPost, unauthorizedBody, http.StatusUnauthorized},
+		{"wrong method", http.MethodGet, nil, http.StatusMethodNotAllowed},
+		{"garbage", http.MethodPost, []byte{0xff, 0xff, 0xff}, http.StatusBadRequest},
+		{"too large", http.MethodPost, bytes.Repeat([]byte{0}, maxRequestSize+1), http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			influxMock := InfluxMock{}
+			influxMock.Reset()
+			app := application{config: &validConfig, influxClient: &influxMock}
+
+			rec := httptest.NewRecorder()
+			app.httpHandler(rec, httptest.NewRequest(tt.method, "/sensorbox", bytes.NewReader(tt.body)))
+			assert.Equal(t, tt.status, rec.Code)
+			if tt.status == http.StatusOK {
+				influxMock.WaitForWrite(time.Second)
+			}
+			app.wg.Wait()
+		})
+	}
+}
+
+// TestParseLegacyConfig ensures that config files still containing the removed ntfy/battery sections can be parsed.
+func TestParseLegacyConfig(t *testing.T) {
+	path := t.TempDir() + "/config.yml"
+	legacy := validConfigStr + "ntfy:\n  url: https://ntfy.example.com/topic\n  timeout: 5s\nbattery:\n  thresholdVoltage: 3.5\n"
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	config, err := parseConfig(path)
+	if err != nil {
+		t.Fatalf("parseConfig: %v", err)
+	}
+	assert.Equal(t, validConfig, *config)
 }

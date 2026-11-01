@@ -2,25 +2,24 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
-	"contrib.go.opencensus.io/exporter/prometheus"
 	influxdb "github.com/influxdata/influxdb1-client/v2"
 	"github.com/mwuertinger/sensorbox/server/pb"
-	"go.opencensus.io/plugin/ochttp"
-	"go.opencensus.io/stats/view"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.yaml.in/yaml/v3"
 	"google.golang.org/protobuf/proto"
-	"gopkg.in/yaml.v2"
 )
 
 func main() {
@@ -48,31 +47,17 @@ func main() {
 	var app = application{
 		config:       config,
 		influxClient: influxClient,
-		httpClient: http.Client{
-			Timeout: config.Ntfy.Timeout,
-		},
 	}
 	mux.HandleFunc("/sensorbox", app.httpHandler)
 
-	pe, err := prometheus.NewExporter(prometheus.Options{
-		Namespace: "sensorbox_server",
-	})
-	if err != nil {
-		log.Fatalf("failed to create Prometheus exporter: %v", err)
-	}
-	mux.Handle("/metrics", pe)
-
-	och := &ochttp.Handler{
-		Handler: mux,
-	}
-	if err := view.Register(ochttp.ServerRequestCountView, ochttp.ServerRequestBytesView,
-		ochttp.ServerResponseBytesView, ochttp.ServerLatencyView); err != nil {
-		log.Fatalf("failed to register server views for HTTP metrics: %v", err)
-	}
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+	handler := instrumentHandler(reg, mux)
 
 	server := &http.Server{
 		Addr:         config.Http.Listen,
-		Handler:      och,
+		Handler:      handler,
 		ReadTimeout:  config.Http.ReadWriteTimeout,
 		WriteTimeout: config.Http.ReadWriteTimeout,
 	}
@@ -93,31 +78,69 @@ func main() {
 	if err := influxClient.Close(); err != nil {
 		log.Printf("influx: %v", err)
 	}
-	app.httpClient.CloseIdleConnections()
+}
+
+// maxRequestSize limits the size of request bodies. Requests sent by sensorboxes are ~100 bytes.
+const maxRequestSize = 4096
+
+// instrumentHandler wraps handler with Prometheus HTTP server metrics.
+func instrumentHandler(reg prometheus.Registerer, handler http.Handler) http.Handler {
+	const namespace = "sensorbox_server"
+	requests := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: namespace,
+		Name:      "http_requests_total",
+		Help:      "Number of HTTP requests by status code and method.",
+	}, []string{"code", "method"})
+	duration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: namespace,
+		Name:      "http_request_duration_seconds",
+		Help:      "HTTP request latency.",
+		Buckets:   prometheus.DefBuckets,
+	}, []string{"code", "method"})
+	requestSize := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: namespace,
+		Name:      "http_request_size_bytes",
+		Help:      "HTTP request size.",
+		Buckets:   prometheus.ExponentialBuckets(64, 4, 6),
+	}, []string{"code", "method"})
+	responseSize := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: namespace,
+		Name:      "http_response_size_bytes",
+		Help:      "HTTP response size.",
+		Buckets:   prometheus.ExponentialBuckets(64, 4, 6),
+	}, []string{"code", "method"})
+	reg.MustRegister(requests, duration, requestSize, responseSize)
+
+	return promhttp.InstrumentHandlerCounter(requests,
+		promhttp.InstrumentHandlerDuration(duration,
+			promhttp.InstrumentHandlerRequestSize(requestSize,
+				promhttp.InstrumentHandlerResponseSize(responseSize, handler))))
 }
 
 type application struct {
-	config           *Config
-	influxClient     influxdb.Client
-	httpClient       http.Client
-	wg               sync.WaitGroup // used to wait for pending goroutines
-	mu               sync.Mutex     // protects everything below
-	lastBatteryAlert map[int]time.Time
+	config       *Config
+	influxClient influxdb.Client
+	wg           sync.WaitGroup // used to wait for pending goroutines
 }
 
 func (app *application) httpHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
-	buf, err := io.ReadAll(r.Body)
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	buf, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestSize))
 	if err != nil {
 		log.Printf("read body: %v", err)
-		w.WriteHeader(500)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	var request pb.Request
 	if err := proto.Unmarshal(buf, &request); err != nil {
 		log.Printf("unmarshal: %v", err)
-		w.WriteHeader(500)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
@@ -141,11 +164,9 @@ func (app *application) httpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = w.Write(data)
-	if err != nil {
+	if _, err := w.Write(data); err != nil {
+		// Headers have already been sent at this point, nothing else to do.
 		log.Printf("write response: %v", err)
-		w.WriteHeader(500)
-		return
 	}
 }
 
@@ -158,7 +179,7 @@ func (app *application) handleRequest(request *pb.Request) (*pb.Response, error)
 		log.Printf("unknown device: %d", request.DevId)
 		return nil, unauthorizedErr
 	}
-	if dev.AuthToken != request.AuthToken {
+	if subtle.ConstantTimeCompare([]byte(dev.AuthToken), []byte(request.AuthToken)) != 1 {
 		log.Printf("wrong auth token for device: %d", request.DevId)
 		return nil, unauthorizedErr
 	}
@@ -173,53 +194,14 @@ func (app *application) handleRequest(request *pb.Request) (*pb.Response, error)
 }
 
 func (app *application) processMeasurements(request *pb.Request, dev Device, devId int) {
+	// Add must happen before the goroutine is started, otherwise Wait() in main() may miss it.
+	app.wg.Add(1)
 	go func() {
-		app.wg.Add(1)
 		defer app.wg.Done()
 		if err := app.writeToInflux(dev.Location, request.Measurement); err != nil {
-			log.Printf("write to influx: %v", err)
+			log.Printf("write to influx (dev %d): %v", devId, err)
 		}
 	}()
-	go func() {
-		app.wg.Add(1)
-		defer app.wg.Done()
-		if err := app.batteryAlert(devId, dev, request.Measurement); err != nil {
-			log.Printf("battery alert: %v", err)
-		}
-	}()
-}
-
-func (app *application) batteryAlert(devId int, dev Device, measurement *pb.Measurement) error {
-	if measurement.BatteryVoltage == 0 || measurement.BatteryVoltage > app.config.Battery.ThresholdVoltage {
-		return nil
-	}
-	app.mu.Lock()
-	log.Printf("batteryAlert(%d): voltage=%f, lastAlert=%s", devId, measurement.BatteryVoltage,
-		app.lastBatteryAlert[devId].Format("2006-01-02 15:04:05"))
-
-	// send at most one alert every 24h for every device
-	if app.lastBatteryAlert[devId].After(time.Now().Add(-24 * time.Hour)) {
-		log.Printf("batteryAlert(%d): last alert too recent", devId)
-		return nil
-	}
-	app.lastBatteryAlert[devId] = time.Now()
-	app.mu.Unlock()
-
-	msg := fmt.Sprintf("battery low for %s device", dev.Location)
-
-	res, err := app.httpClient.Post(app.config.Ntfy.Url, "text/plain", strings.NewReader(msg))
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return fmt.Errorf("read body: %v", err)
-	}
-	if res.StatusCode != 200 {
-		return fmt.Errorf("status: %d, body: %s", res.StatusCode, string(body))
-	}
-	return nil
 }
 
 // writeToInflux writes measurements to InfluxDB
@@ -273,8 +255,6 @@ type Config struct {
 	Http    HttpConfig     `yaml:"http"`
 	Influx  InfluxConfig   `yaml:"influx"`
 	Devices map[int]Device `yaml:"devices"`
-	Ntfy    NtfyConfig     `yaml:"ntfy"`
-	Battery BatteryConfig  `yaml:"battery"`
 }
 
 type HttpConfig struct {
@@ -296,14 +276,9 @@ type Device struct {
 	AuthToken string `yaml:"authToken"`
 }
 
-type NtfyConfig struct {
-	Url     string        `yaml:"url"`
-	Timeout time.Duration `yaml:"timeout"`
-}
-
-type BatteryConfig struct {
-	ThresholdVoltage float32 `yaml:"thresholdVoltage"`
-}
+// defaultInfluxTimeout is used if no timeout is configured. Without a timeout, a hanging InfluxDB would cause
+// goroutines to pile up.
+const defaultInfluxTimeout = 10 * time.Second
 
 // parseConfig reads config file at path and returns the content or an error
 func parseConfig(path string) (*Config, error) {
@@ -315,6 +290,9 @@ func parseConfig(path string) (*Config, error) {
 	err = yaml.Unmarshal(buf, &config)
 	if err != nil {
 		return nil, err
+	}
+	if config.Influx.Timeout == 0 {
+		config.Influx.Timeout = defaultInfluxTimeout
 	}
 	return &config, nil
 }
