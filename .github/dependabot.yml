@@ -1,0 +1,17 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /server
+    schedule:
+      interval: monthly
+    groups:
+      server:
+        patterns: ["*"]
+  - package-ecosystem: gomod
+    directory: /config-tool
+    schedule:
+      interval: monthly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
