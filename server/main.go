@@ -3,13 +3,11 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -48,9 +46,6 @@ func main() {
 	var app = application{
 		config:       config,
 		influxClient: influxClient,
-		httpClient: http.Client{
-			Timeout: config.Ntfy.Timeout,
-		},
 	}
 	mux.HandleFunc("/sensorbox", app.httpHandler)
 
@@ -87,22 +82,20 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), config.Http.ShutdownTimeout)
 	defer cancel()
 	if err := server.Shutdown(ctx); err != nil {
+		// Handlers may still be running and calling wg.Add, so Wait would be unsafe.
 		log.Printf("http: %v", err)
+	} else {
+		app.wg.Wait() // wait for pending influx writes
 	}
-	app.wg.Wait() // wait for all goroutines to finish
 	if err := influxClient.Close(); err != nil {
 		log.Printf("influx: %v", err)
 	}
-	app.httpClient.CloseIdleConnections()
 }
 
 type application struct {
-	config           *Config
-	influxClient     influxdb.Client
-	httpClient       http.Client
-	wg               sync.WaitGroup // used to wait for pending goroutines
-	mu               sync.Mutex     // protects everything below
-	lastBatteryAlert map[int]time.Time
+	config       *Config
+	influxClient influxdb.Client
+	wg           sync.WaitGroup // used to wait for pending goroutines
 }
 
 func (app *application) httpHandler(w http.ResponseWriter, r *http.Request) {
@@ -173,53 +166,14 @@ func (app *application) handleRequest(request *pb.Request) (*pb.Response, error)
 }
 
 func (app *application) processMeasurements(request *pb.Request, dev Device, devId int) {
+	// Add must happen before the goroutine is started, otherwise Wait() in main() may miss it.
+	app.wg.Add(1)
 	go func() {
-		app.wg.Add(1)
 		defer app.wg.Done()
 		if err := app.writeToInflux(dev.Location, request.Measurement); err != nil {
-			log.Printf("write to influx: %v", err)
+			log.Printf("write to influx (dev %d): %v", devId, err)
 		}
 	}()
-	go func() {
-		app.wg.Add(1)
-		defer app.wg.Done()
-		if err := app.batteryAlert(devId, dev, request.Measurement); err != nil {
-			log.Printf("battery alert: %v", err)
-		}
-	}()
-}
-
-func (app *application) batteryAlert(devId int, dev Device, measurement *pb.Measurement) error {
-	if measurement.BatteryVoltage == 0 || measurement.BatteryVoltage > app.config.Battery.ThresholdVoltage {
-		return nil
-	}
-	app.mu.Lock()
-	log.Printf("batteryAlert(%d): voltage=%f, lastAlert=%s", devId, measurement.BatteryVoltage,
-		app.lastBatteryAlert[devId].Format("2006-01-02 15:04:05"))
-
-	// send at most one alert every 24h for every device
-	if app.lastBatteryAlert[devId].After(time.Now().Add(-24 * time.Hour)) {
-		log.Printf("batteryAlert(%d): last alert too recent", devId)
-		return nil
-	}
-	app.lastBatteryAlert[devId] = time.Now()
-	app.mu.Unlock()
-
-	msg := fmt.Sprintf("battery low for %s device", dev.Location)
-
-	res, err := app.httpClient.Post(app.config.Ntfy.Url, "text/plain", strings.NewReader(msg))
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return fmt.Errorf("read body: %v", err)
-	}
-	if res.StatusCode != 200 {
-		return fmt.Errorf("status: %d, body: %s", res.StatusCode, string(body))
-	}
-	return nil
 }
 
 // writeToInflux writes measurements to InfluxDB
@@ -273,8 +227,6 @@ type Config struct {
 	Http    HttpConfig     `yaml:"http"`
 	Influx  InfluxConfig   `yaml:"influx"`
 	Devices map[int]Device `yaml:"devices"`
-	Ntfy    NtfyConfig     `yaml:"ntfy"`
-	Battery BatteryConfig  `yaml:"battery"`
 }
 
 type HttpConfig struct {
@@ -294,15 +246,6 @@ type InfluxConfig struct {
 type Device struct {
 	Location  string `yaml:"location"`
 	AuthToken string `yaml:"authToken"`
-}
-
-type NtfyConfig struct {
-	Url     string        `yaml:"url"`
-	Timeout time.Duration `yaml:"timeout"`
-}
-
-type BatteryConfig struct {
-	ThresholdVoltage float32 `yaml:"thresholdVoltage"`
 }
 
 // parseConfig reads config file at path and returns the content or an error
