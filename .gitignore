@@ -11,7 +11,13 @@ cmake-build-nodemcuv2
 
 config-tool/dump/dump
 config-tool/generate/generate
-config-tool/modify/modify
+# local tool containing credentials
+config-tool/modify/
 *.bin
 
 server/server
+
+# flash dumps may contain WiFi credentials and auth tokens
+*.full-dump
+cmake-build-*
+/bazel-*
