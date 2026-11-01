@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"sync"
 	"testing"
@@ -11,6 +14,7 @@ import (
 
 	influxdb "github.com/influxdata/influxdb1-client/v2"
 	"github.com/stretchr/testify/assert"
+	"google.golang.org/protobuf/proto"
 )
 
 var validConfigStr = `---
@@ -40,7 +44,8 @@ var validConfig = Config{
 		KeyFile:          "sensorbox-server.key",
 	},
 	Influx: InfluxConfig{
-		Server: "http://localhost:8086",
+		Server:  "http://localhost:8086",
+		Timeout: defaultInfluxTimeout,
 	},
 	Devices: map[int]Device{
 		1: {
@@ -230,4 +235,43 @@ func TestParseLegacyConfig(t *testing.T) {
 		t.Fatalf("parseConfig: %v", err)
 	}
 	assert.Equal(t, validConfig, *config)
+}
+
+func TestHttpHandler(t *testing.T) {
+	validBody, err := proto.Marshal(&pb.Request{
+		DevId:       1,
+		AuthToken:   "ooF",
+		Measurement: &pb.Measurement{Temperature: 293.15},
+	})
+	assert.NoError(t, err)
+	unauthorizedBody, err := proto.Marshal(&pb.Request{DevId: 1, AuthToken: "wrong"})
+	assert.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		method string
+		body   []byte
+		status int
+	}{
+		{"valid", http.MethodPost, validBody, http.StatusOK},
+		{"unauthorized", http.MethodPost, unauthorizedBody, http.StatusUnauthorized},
+		{"wrong method", http.MethodGet, nil, http.StatusMethodNotAllowed},
+		{"garbage", http.MethodPost, []byte{0xff, 0xff, 0xff}, http.StatusBadRequest},
+		{"too large", http.MethodPost, bytes.Repeat([]byte{0}, maxRequestSize+1), http.StatusBadRequest},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			influxMock := InfluxMock{}
+			influxMock.Reset()
+			app := application{config: &validConfig, influxClient: &influxMock}
+
+			rec := httptest.NewRecorder()
+			app.httpHandler(rec, httptest.NewRequest(tt.method, "/sensorbox", bytes.NewReader(tt.body)))
+			assert.Equal(t, tt.status, rec.Code)
+			if tt.status == http.StatusOK {
+				influxMock.WaitForWrite(time.Second)
+			}
+			app.wg.Wait()
+		})
+	}
 }

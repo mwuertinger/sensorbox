@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"io"
 	"log"
@@ -92,6 +93,9 @@ func main() {
 	}
 }
 
+// maxRequestSize limits the size of request bodies. Requests sent by sensorboxes are ~100 bytes.
+const maxRequestSize = 4096
+
 type application struct {
 	config       *Config
 	influxClient influxdb.Client
@@ -101,16 +105,21 @@ type application struct {
 func (app *application) httpHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
-	buf, err := io.ReadAll(r.Body)
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	buf, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestSize))
 	if err != nil {
 		log.Printf("read body: %v", err)
-		w.WriteHeader(500)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 	var request pb.Request
 	if err := proto.Unmarshal(buf, &request); err != nil {
 		log.Printf("unmarshal: %v", err)
-		w.WriteHeader(500)
+		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
@@ -134,11 +143,9 @@ func (app *application) httpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = w.Write(data)
-	if err != nil {
+	if _, err := w.Write(data); err != nil {
+		// Headers have already been sent at this point, nothing else to do.
 		log.Printf("write response: %v", err)
-		w.WriteHeader(500)
-		return
 	}
 }
 
@@ -151,7 +158,7 @@ func (app *application) handleRequest(request *pb.Request) (*pb.Response, error)
 		log.Printf("unknown device: %d", request.DevId)
 		return nil, unauthorizedErr
 	}
-	if dev.AuthToken != request.AuthToken {
+	if subtle.ConstantTimeCompare([]byte(dev.AuthToken), []byte(request.AuthToken)) != 1 {
 		log.Printf("wrong auth token for device: %d", request.DevId)
 		return nil, unauthorizedErr
 	}
@@ -248,6 +255,10 @@ type Device struct {
 	AuthToken string `yaml:"authToken"`
 }
 
+// defaultInfluxTimeout is used if no timeout is configured. Without a timeout, a hanging InfluxDB would cause
+// goroutines to pile up.
+const defaultInfluxTimeout = 10 * time.Second
+
 // parseConfig reads config file at path and returns the content or an error
 func parseConfig(path string) (*Config, error) {
 	buf, err := os.ReadFile(path)
@@ -258,6 +269,9 @@ func parseConfig(path string) (*Config, error) {
 	err = yaml.Unmarshal(buf, &config)
 	if err != nil {
 		return nil, err
+	}
+	if config.Influx.Timeout == 0 {
+		config.Influx.Timeout = defaultInfluxTimeout
 	}
 	return &config, nil
 }
