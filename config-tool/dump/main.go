@@ -1,33 +1,28 @@
+// dump prints a config read from flash, e.g. with:
+//
+//	esptool.py --port /dev/ttyUSB0 read_flash 0x03fb000 0x400 config.bin
 package main
 
 import (
-	"encoding/binary"
-	"google.golang.org/protobuf/proto"
-	"hash/crc32"
-	"io/ioutil"
 	"log"
 	"os"
 
-	"github.com/mwuertinger/sensorbox/config-tool/pb"
+	"google.golang.org/protobuf/encoding/prototext"
+
+	"github.com/mwuertinger/sensorbox/config-tool/configfile"
 )
 
 func main() {
-	in, err := ioutil.ReadFile(os.Args[1])
+	if len(os.Args) != 2 {
+		log.Fatalf("Usage: %s <config.bin>", os.Args[0])
+	}
+	in, err := os.ReadFile(os.Args[1])
 	if err != nil {
-		log.Fatalln("Error reading file:", err)
+		log.Fatalf("read file: %v", err)
 	}
-	length := binary.LittleEndian.Uint32(in[0:4])
-
-	checksum := binary.LittleEndian.Uint32(in[4:8])
-	calculatedChecksum := crc32.ChecksumIEEE(in[8 : length+8])
-	if checksum != calculatedChecksum {
-		log.Fatalf("Checksum mismatch: provided=%d, calculated=%d", checksum, calculatedChecksum)
+	config, err := configfile.Decode(in)
+	if err != nil {
+		log.Fatal(err)
 	}
-
-	config := &pb.ConfigPb{}
-	if err := proto.Unmarshal(in[8:length+8], config); err != nil {
-		log.Fatalln("Failed to parse address book:", err)
-	}
-
-	log.Println(config)
+	os.Stdout.WriteString(prototext.Format(config) + "\n")
 }
