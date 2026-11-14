@@ -17,6 +17,10 @@ env:
   NANOPB_VERSION: "0.4.9.1"
   GRPCIO_TOOLS_VERSION: "1.85.1"
   GOVULNCHECK_VERSION: "v1.9.0"
+  # govulncheck v1.9.0 needs Go >= 1.26 to build, newer than the server's
+  # toolchain, so it is built with its own Go. The scan itself runs with the
+  # server's Go from setup-go (on PATH), so it checks that Go's standard library.
+  GOVULNCHECK_BUILD_GO: "go1.26.11"
 
 jobs:
   govulncheck:
@@ -45,5 +49,6 @@ jobs:
         run: ../protoc.sh server
       - name: govulncheck
         run: |
-          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          GOTOOLCHAIN="${GOVULNCHECK_BUILD_GO}" go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          go version
           "$(go env GOPATH)/bin/govulncheck" ./...

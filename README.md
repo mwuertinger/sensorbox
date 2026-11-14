@@ -30,7 +30,9 @@ platformio run --target upload
 ```
 
 ### Configuration
-The configuration is stored in flash and created with the [config-tool](config-tool/):
+The configuration is stored in flash and created with the [config-tool](config-tool/). The flags below are
+those of the config-tool from PR #7 (not merged yet); until then `go run ./generate` takes `-dev_id`,
+`-wlan_ssid`, `-wlan_passwd` and the `-mqtt_*` flags and writes the config to stdout.
 ```
 cd config-tool
 go run ./generate -out config.bin -dev_id 1 -wlan_ssid ... -wlan_passwd ... -auth_token ... \
