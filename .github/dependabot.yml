@@ -1,5 +1,7 @@
 version: 2
 updates:
+  # Dependabot runs go mod tidy without running protoc.sh, so the generated protobuf code is
+  # missing. server/pb/doc.go and config-tool/pb/doc.go keep the pb packages resolvable; see there.
   - package-ecosystem: gomod
     directory: /server
     schedule:

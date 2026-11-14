@@ -17,10 +17,12 @@ env:
   NANOPB_VERSION: "0.4.9.1"
   GRPCIO_TOOLS_VERSION: "1.85.1"
   GOVULNCHECK_VERSION: "v1.9.0"
-  # govulncheck v1.9.0 needs Go >= 1.26 to build, newer than the server's
-  # toolchain, so it is built with its own Go. The scan itself runs with the
-  # server's Go from setup-go (on PATH), so it checks that Go's standard library.
-  GOVULNCHECK_BUILD_GO: "go1.26.11"
+  # govulncheck is built with its own Go: v1.9.0 needs Go >= 1.26 to build, and it can only
+  # type-check a standard library that is not newer than the Go it was built with (built with
+  # Go 1.26, scanning with Go 1.27 fails with type errors in the standard library). So use the
+  # latest Go release here, at least as new as the server's toolchain. The scan itself runs with
+  # the server's Go from setup-go (on PATH), so it checks that Go's standard library.
+  GOVULNCHECK_BUILD_GO: "go1.27.4"
 
 jobs:
   govulncheck:
