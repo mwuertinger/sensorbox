@@ -44,7 +44,10 @@ The SHA1 fingerprint of the server certificate can be obtained with:
 ```
 openssl x509 -in sensorbox-server.crt -noout -fingerprint -sha1
 ```
-Devices with a fingerprint reject any other certificate, so reflash their config when the server certificate changes.
+With the firmware from PR #8 (not merged yet), devices with a fingerprint reject any other certificate, so
+reflash their config when the server certificate changes; `-server_uri` also only takes effect with that firmware.
+The firmware on master does **not** verify the server certificate (it calls `setInsecure()` after
+`setFingerprint()`) and always connects to `https://192.168.178.2:4000/sensorbox`.
 
 ## Hardware
 The PCB was designed with KiCad. The following parts are required:
