@@ -1,0 +1,76 @@
+# Systemd unit for sensorbox-server on hal. Install to /etc/systemd/system/.
+#
+# Runs as the static user "sensorbox-server" without any capabilities and with a
+# read-only view of the file system. The config (device auth tokens), the TLS
+# certificate and its key are in /etc/sensorbox-server, readable only by root
+# and the sensorbox-server group. Check the result with:
+#   systemd-analyze security sensorbox-server.service
+
+[Unit]
+Description=Sensorbox server: receives sensor data and writes it to InfluxDB
+Documentation=https://github.com/mwuertinger/sensorbox
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/sensorbox-server /etc/sensorbox-server/sensorbox-server.conf
+Restart=always
+RestartSec=10s
+
+# Identity: static user, because the group owns the config, cert and key.
+User=sensorbox-server
+Group=sensorbox-server
+PrivateUsers=yes
+UMask=0077
+
+# No privileges at all.
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+
+# File system: everything read-only, no home directories, no devices, private
+# /tmp, and nothing but the binary itself may be executed. The binary must be
+# statically linked (CGO_ENABLED=0) for that.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+DevicePolicy=closed
+ProtectProc=invisible
+ProcSubset=pid
+NoExecPaths=/
+ExecPaths=/usr/local/bin/sensorbox-server
+MemoryDenyWriteExecute=yes
+# The host's /dev/shm and /dev/mqueue stay visible and writable even with
+# PrivateDevices= (shared memory, POSIX message queues); not needed.
+InaccessiblePaths=/dev/shm /dev/mqueue
+
+# Kernel attack surface.
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+PrivateIPC=yes
+RemoveIPC=yes
+KeyringMode=private
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+# Network: IPv4/IPv6 only. Listens on port 4000 for the sensor boxes (the host
+# firewall allows only the LAN), writes to InfluxDB on [::1] and sends
+# notifications to ntfy.sh, which is public, so there is no IPAddressAllow=.
+RestrictAddressFamilies=AF_INET AF_INET6
+
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
