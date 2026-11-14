@@ -10,12 +10,13 @@ Alerting (temperature and battery) is handled by [temperature-alert](https://git
 ## Software
 The firmware is written in C++ and built using platformio. The server and config-tool are written in Go.
 
-Generating protobuf code (required before building anything):
+Generating protobuf code (required before building anything; Go must be installed):
 ```
 pip install nanopb==0.4.9.1 grpcio-tools
-go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-./protoc.sh
+./protoc.sh                 # or only some targets: ./protoc.sh server config-tool firmware
 ```
+`protoc-gen-go` is built from the `google.golang.org/protobuf` version in each module's `go.mod`, so the generated
+code always matches the protobuf runtime it is compiled against.
 
 Building the firmware:
 ```
