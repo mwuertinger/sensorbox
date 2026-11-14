@@ -4,88 +4,129 @@ on:
   push:
     branches: [master]
   pull_request:
-  schedule:
-    # weekly run to catch newly published vulnerabilities
-    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
+  PYTHON_VERSION: "3.13"
+  # The nanopb generator must match the Nanopb runtime library used by the firmware (firmware/platformio.ini).
   NANOPB_VERSION: "0.4.9.1"
   GRPCIO_TOOLS_VERSION: "1.85.1"
-  PROTOC_GEN_GO_VERSION: "v1.36.12"
   PLATFORMIO_VERSION: "6.2.0"
-  GOVULNCHECK_VERSION: "v1.9.0"
 
 jobs:
   go:
     name: Go (${{ matrix.module }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         module: [server, config-tool]
+    env:
+      MODULE: ${{ matrix.module }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Uses the toolchain directive of go.mod if present, otherwise the go directive.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: ${{ matrix.module }}/go.mod
           cache-dependency-path: ${{ matrix.module }}/go.sum
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.13"
-      - name: Install code generators
-        run: |
-          pip install "nanopb==${NANOPB_VERSION}" "grpcio-tools==${GRPCIO_TOOLS_VERSION}"
-          go install "google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}"
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install protoc and nanopb
+        run: pip install "nanopb==${NANOPB_VERSION}" "grpcio-tools==${GRPCIO_TOOLS_VERSION}"
+      # Generated code is not committed (see .gitignore). protoc.sh builds protoc-gen-go from the
+      # google.golang.org/protobuf version in this module's go.mod.
       - name: Generate protobuf code
-        run: ./protoc.sh
+        run: ../protoc.sh "$MODULE"
+      - name: Go version
+        run: go version
       - name: Check formatting
-        working-directory: ${{ matrix.module }}
         run: |
-          out=$(gofmt -l .)
-          [ -z "$out" ] || { echo "$out"; exit 1; }
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "::error::files not formatted with gofmt:"
+            echo "$out"
+            exit 1
+          fi
+      - name: Check go.mod and go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum || { echo "::error::go.mod/go.sum are not tidy, run 'go mod tidy'"; exit 1; }
       - name: Vet
-        working-directory: ${{ matrix.module }}
         run: go vet ./...
       - name: Test
-        working-directory: ${{ matrix.module }}
         run: go test -race ./...
       - name: Build
-        working-directory: ${{ matrix.module }}
         run: go build ./...
-      - name: govulncheck
-        working-directory: ${{ matrix.module }}
+      - name: Cross-build for Raspberry Pi (linux/armv7, static)
+        if: matrix.module == 'server'
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: arm
+          GOARM: "7"
         run: |
-          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
-          govulncheck ./...
+          go vet ./...
+          go build -trimpath -o "$RUNNER_TEMP/sensorbox-server" .
+          file "$RUNNER_TEMP/sensorbox-server"
+          file "$RUNNER_TEMP/sensorbox-server" | grep -q 'ELF 32-bit LSB executable, ARM, EABI5.*statically linked'
+          go version -m "$RUNNER_TEMP/sensorbox-server" | grep -E 'GOARCH|GOARM|CGO_ENABLED'
+          go version -m "$RUNNER_TEMP/sensorbox-server" | grep -qx $'\tbuild\tGOARM=7'
+      - name: Check that generated and built files are not committed
+        run: |
+          status="$(git status --porcelain --untracked-files=all)"
+          if [ -n "$status" ]; then
+            echo "::error::working tree changed during the build (committed generated code or missing .gitignore entry?):"
+            echo "$status"
+            exit 1
+          fi
 
   firmware:
     name: Firmware
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version-file: server/go.mod
-          cache: false
-      - uses: actions/setup-python@v7
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.13"
-      - uses: actions/cache@v6
+          python-version: ${{ env.PYTHON_VERSION }}
+      # Platform packages (toolchain, Arduino core); libraries are installed into firmware/.pio.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.platformio
-          key: platformio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini') }}
-      - name: Install tools
-        run: |
-          pip install "platformio==${PLATFORMIO_VERSION}" "nanopb==${NANOPB_VERSION}" "grpcio-tools==${GRPCIO_TOOLS_VERSION}"
-          go install "google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}"
+          key: platformio-${{ runner.os }}-${{ env.PLATFORMIO_VERSION }}-${{ hashFiles('firmware/platformio.ini') }}
+      - name: Install PlatformIO, protoc and nanopb
+        run: pip install "platformio==${PLATFORMIO_VERSION}" "nanopb==${NANOPB_VERSION}" "grpcio-tools==${GRPCIO_TOOLS_VERSION}"
       - name: Generate protobuf code
-        run: ./protoc.sh
+        run: ./protoc.sh firmware
       - name: Build firmware
         run: pio run -d firmware
-      - uses: actions/upload-artifact@v7
+      - name: Check that generated and built files are not committed
+        run: |
+          status="$(git status --porcelain --untracked-files=all)"
+          if [ -n "$status" ]; then
+            echo "::error::working tree changed during the build (committed generated code or missing .gitignore entry?):"
+            echo "$status"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: firmware
           path: firmware/.pio/build/*/firmware.bin
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,49 @@
+# Vulnerability scan, kept out of the pull request checks: its result depends on the Go vulnerability
+# database, which changes independently of this repository. A failed run notifies the repository owner.
+name: govulncheck
+
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.13"
+  NANOPB_VERSION: "0.4.9.1"
+  GRPCIO_TOOLS_VERSION: "1.85.1"
+  GOVULNCHECK_VERSION: "v1.9.0"
+
+jobs:
+  govulncheck:
+    # Only the server: it is the network-facing service. The config-tool pins go 1.16, which cannot build govulncheck.
+    name: govulncheck (server)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The scan includes the standard library of this Go version, i.e. the toolchain directive in go.mod.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install protoc and nanopb
+        run: pip install "nanopb==${NANOPB_VERSION}" "grpcio-tools==${GRPCIO_TOOLS_VERSION}"
+      - name: Generate protobuf code
+        run: ../protoc.sh server
+      - name: govulncheck
+        run: |
+          go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+          "$(go env GOPATH)/bin/govulncheck" ./...
