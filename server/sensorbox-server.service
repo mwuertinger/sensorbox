@@ -43,6 +43,8 @@ ProcSubset=pid
 NoExecPaths=/
 ExecPaths=/usr/local/bin/sensorbox-server
 MemoryDenyWriteExecute=yes
+# /dev/shm stays the host's (shared, writable) even with PrivateDevices=; not needed.
+InaccessiblePaths=/dev/shm
 
 # Kernel attack surface.
 ProtectKernelTunables=yes
