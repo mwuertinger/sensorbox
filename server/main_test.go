@@ -172,7 +172,8 @@ func TestRequest(t *testing.T) {
 		influxClient: &influxMock,
 	}
 
-	for i, d := range data {
+	for i := range data {
+		d := &data[i]
 		t.Run(fmt.Sprintf("Test %d", i), func(t *testing.T) {
 			influxMock.Reset()
 			_, err := app.handleRequest(&d.request)
